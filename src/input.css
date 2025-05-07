@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+    .background-welcome {
+        @apply bg-welcome bg-scroll bg-center h-screen overflow-auto;
+    }
+}
