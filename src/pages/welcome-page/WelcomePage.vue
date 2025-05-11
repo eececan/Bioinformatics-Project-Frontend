@@ -2,7 +2,6 @@
   <v-container fluid class="pa-10 bio-bg text-grey-darken-4">
     <div class="dna-bg"></div>
 
-    <!-- Title -->
     <div class="text-center mb-8 position-relative z-index-1">
       <v-icon size="64" color="green darken-2">mdi-dna</v-icon>
       <h1 class="text-h4 font-weight-bold mt-2">miRNA Target Gene & Pathway Analyzer</h1>
@@ -11,13 +10,10 @@
       </h2>
     </div>
 
-    <!-- Form and Results -->
     <v-row justify="center" class="z-index-1 position-relative">
-      <!-- Form -->
       <v-col cols="12" md="6" lg="5">
         <v-card class="pa-6 rounded-lg elevation-10">
           <v-form @submit.prevent="submitSearch">
-            <!-- Collapsible Textarea -->
             <v-textarea
                 v-model="mirnas"
                 label="Enter miRNA(s)"
@@ -29,7 +25,6 @@
                 class="mb-4"
             />
 
-            <!-- Heuristics -->
             <v-select
                 v-model="selectedHeuristics"
                 :items="heuristics"
@@ -40,7 +35,7 @@
                 class="mb-2"
             >
               <template #append>
-                <v-tooltip text="Heuristics like PITA, MiRanda, RNA22, TargetScan">
+                <v-tooltip text="Select at least 2 tools">
                   <template #activator="{ props }">
                     <v-icon v-bind="props" small class="ml-2">mdi-information</v-icon>
                   </template>
@@ -48,7 +43,6 @@
               </template>
             </v-select>
 
-            <!-- Merge Strategy -->
             <v-select
                 v-model="mergeStrategy"
                 :items="strategies"
@@ -58,7 +52,7 @@
                 class="mb-4"
             >
               <template #append>
-                <v-tooltip text="'intersection' = common targets, 'score-based' = aggregate ranking">
+                <v-tooltip text="'union' = all results, 'intersection' = common targets, 'at least two tools' = targets predicted by at least two tools">
                   <template #activator="{ props }">
                     <v-icon v-bind="props" small class="ml-2">mdi-help-circle</v-icon>
                   </template>
@@ -66,7 +60,6 @@
               </template>
             </v-select>
 
-            <!-- Submit Button -->
             <div class="text-center">
               <v-btn type="submit" color="green darken-1" dark>
                 <v-icon left>mdi-magnify</v-icon> Analyze
@@ -74,51 +67,69 @@
             </div>
           </v-form>
         </v-card>
-
-        <!-- Payload -->
-        <v-card v-if="showOutput" class="mt-6 pa-4">
-          <h3 class="text-h6 font-weight-bold mb-2">Submitted Payload:</h3>
-          <pre class="text-sm">{{ JSON.stringify(payload, null, 2) }}</pre>
-        </v-card>
-
-        <!-- Target Genes -->
-        <v-card v-if="targetGenes.length" class="mt-6 pa-4">
-          <h3 class="text-h6 font-weight-bold mb-2">Predicted Target Genes:</h3>
-          <v-chip-group column>
-            <v-chip v-for="(gene, i) in targetGenes" :key="i" color="indigo lighten-4" class="ma-1">
-              {{ gene }}
-            </v-chip>
-          </v-chip-group>
-        </v-card>
-
-        <!-- Pathways -->
-        <v-card v-if="pathwayResults.length" class="mt-6 pa-4">
-          <h3 class="text-h6 font-weight-bold mb-2">Affected Pathways (via Enrichment Analysis):</h3>
-          <v-list dense>
-            <v-list-item v-for="(pathway, index) in pathwayResults" :key="index" class="py-1">
-              <v-list-item-content>
-                <v-list-item-title>
-                  <strong>{{ pathway.name }}</strong> — FDR: <span class="font-weight-medium">{{ pathway.fdr }}</span>
-                </v-list-item-title>
-              </v-list-item-content>
-            </v-list-item>
-          </v-list>
-        </v-card>
       </v-col>
 
-      <!-- Graph Placeholder -->
-      <v-col cols="12" md="4" class="d-flex flex-column align-center justify-center">
-        <div v-if="!networkShown" class="text-center">
+      <v-col cols="12" md="6" class="d-flex flex-column align-center justify-center">
+        <div v-if="!filteredPredictions.length && showOutput" class="text-center">
           <v-icon size="120" color="grey lighten-1">mdi-graph</v-icon>
           <p class="mt-2 text-subtitle-2 text-grey">Your network will be shown here.</p>
         </div>
-        <div
-            v-else
-            id="network-visualization"
-            class="pa-4 elevation-2 rounded-lg"
-            style="width: 100%; height: 300px; background-color: #fafafa; border: 2px dashed #ccc;"
-        >
-          <p class="text-center text-grey-darken-2 mt-10">[Network Visualization Placeholder]</p>
+
+        <div v-if="filteredPredictions.length" class="w-100">
+          <div class="d-flex justify-end mb-2">
+            <v-btn
+                color="green darken-1"
+                @click="toggleViewMode"
+                small
+                dark
+            >
+              <v-icon left>mdi-swap-horizontal</v-icon>
+              {{ viewMode === 'graph' ? 'Switch to Table View' : 'Switch to Graph View' }}
+            </v-btn>
+          </div>
+
+          <div
+              v-if="viewMode === 'graph'"
+              id="network-visualization"
+              class="pa-4 elevation-2 rounded-lg"
+              style="width: 100%; height: 300px; background-color: #fafafa; border: 2px dashed #ccc;"
+          >
+            <p class="text-center text-grey-darken-2 mt-10">[Network Visualization Placeholder]</p>
+          </div>
+
+          <div
+              v-else
+              class="pa-4 elevation-2 rounded-lg"
+              style="width: 100%; height: 300px; background-color: #ffffff; border: 1px solid #ccc; overflow-y: auto;"
+          >
+            <v-simple-table dense>
+              <thead>
+              <tr>
+                <th>miRNA</th>
+                <th>Tool</th>
+                <th>Gene</th>
+                <th>Pathway</th>
+              </tr>
+              </thead>
+              <tbody>
+              <tr v-for="(prediction, index) in filteredPredictions" :key="index">
+                <td>{{ inputtedMirna }}</td>
+                <td>
+                  <v-chip v-for="(tool, i) in prediction.tools" :key="i" class="ma-1" small>{{ tool }}</v-chip>
+                </td>
+                <td>{{ prediction.gene }}</td>
+                <td>
+                  <v-chip v-for="(path, j) in prediction.pathways" :key="j" class="ma-1" small>{{ path }}</v-chip>
+                </td>
+              </tr>
+              </tbody>
+            </v-simple-table>
+          </div>
+        </div>
+        <div v-else-if="showOutput" class="mt-6">
+          <v-card class="pa-4 rounded-lg elevation-10 text-center">
+            <p class="text-subtitle-1 text-grey">No predictions found for {{ inputtedMirna }} based on the selected criteria.</p>
+          </v-card>
         </div>
       </v-col>
     </v-row>
@@ -126,19 +137,41 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, computed, watch } from 'vue';
+import axios from 'axios';
 
 const mirnas = ref('');
+const inputtedMirna = ref('');
 const selectedHeuristics = ref([]);
 const mergeStrategy = ref(null);
-const heuristics = ['PITA', 'MiRanda', 'RNA22', 'TargetScan'];
-const strategies = ['intersection', 'union', 'score-based'];
-
-const payload = ref({});
+const heuristics = ['RNA22', 'PicTar', 'miRTarBase', 'TargetScan'];
+const strategies = ['union', 'intersection', 'at least two tools'];
+const viewMode = ref('table');
 const showOutput = ref(false);
-const networkShown = ref(false);
-const targetGenes = ref([]);
-const pathwayResults = ref([]);
+const rawPredictions = ref([]);
+
+const filteredPredictions = computed(() => {
+  if (!showOutput || !rawPredictions.value.length) {
+    return [];
+  }
+
+  return rawPredictions.value.filter(prediction => {
+    // Filter by selected heuristics
+    const hasSelectedTool = prediction.tools.some(tool => selectedHeuristics.value.includes(tool));
+    if (selectedHeuristics.value.length > 0 && !hasSelectedTool) {
+      return false;
+    }
+
+    // Apply merge strategy
+    if (mergeStrategy.value === 'intersection') {
+      return selectedHeuristics.value.every(tool => prediction.tools.includes(tool));
+    } else if (mergeStrategy.value === 'at least two tools') {
+      return prediction.tools.filter(tool => selectedHeuristics.value.includes(tool)).length >= 2;
+    } else { // 'union' or null
+      return true;
+    }
+  });
+});
 
 async function submitSearch() {
   const mirnaList = mirnas.value
@@ -146,30 +179,35 @@ async function submitSearch() {
       .map(m => m.trim())
       .filter(Boolean);
 
-  payload.value = {
-    mirnas: mirnaList,
-    heuristics: selectedHeuristics.value,
-    strategy: mergeStrategy.value
-  };
-
-  console.log('Submitting:', payload.value);
-  showOutput.value = true;
-  networkShown.value = true;
-
-  try {
-    const response = await fetch('/api/pathways', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload.value),
-    });
-    const data = await response.json();
-    targetGenes.value = data.genes || [];
-    pathwayResults.value = data.pathways || [];
-  } catch (err) {
-    console.error('Fetch error:', err);
-    targetGenes.value = [];
-    pathwayResults.value = [];
+  if (mirnaList.length === 1) {
+    inputtedMirna.value = mirnaList[0];
+    try {
+      const response = await axios.get(`/api/mirna/predictions?name=${inputtedMirna.value}`);
+      rawPredictions.value = response.data.predictions.flatMap(pred =>
+          pred.pathways.map(pathway => ({
+            gene: pred.gene,
+            tools: pred.tools,
+            pathways: [pathway],
+          }))
+      );
+      showOutput.value = true;
+      viewMode.value = 'table';
+    } catch (error) {
+      console.error('Error fetching predictions:', error);
+      rawPredictions.value = [];
+      showOutput.value = true;
+      viewMode.value = 'graph';
+    }
+  } else {
+    alert('Please enter only one miRNA for detailed predictions.');
+    rawPredictions.value = [];
+    showOutput.value = false;
+    viewMode.value = 'graph';
   }
+}
+
+function toggleViewMode() {
+  viewMode.value = viewMode.value === 'graph' ? 'table' : 'graph';
 }
 </script>
 
@@ -194,7 +232,6 @@ async function submitSearch() {
   background-size: 300px 800px;
   opacity: 0.12;
   animation: scrollBackground 40s linear infinite;
-
   background-image: url("data:image/svg+xml,%3Csvg width='300' height='800' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%2388c0d0' stroke-width='3'%3E%3Cpath d='M150 0 C280 50, 20 150, 150 200 C280 250, 20 350, 150 400 C280 450, 20 550, 150 600 C280 650, 20 750, 150 800'/%3E%3C/g%3E%3Cg fill='%23cba8ff'%3E%3Ccircle cx='150' cy='50' r='4'/%3E%3Ccircle cx='150' cy='150' r='4'/%3E%3Ccircle cx='150' cy='250' r='4'/%3E%3Ccircle cx='150' cy='350' r='4'/%3E%3Ccircle cx='150' cy='450' r='4'/%3E%3Ccircle cx='150' cy='550' r='4'/%3E%3Ccircle cx='150' cy='650' r='4'/%3E%3Ccircle cx='150' cy='750' r='4'/%3E%3C/g%3E%3C/svg%3E");
 }
 
