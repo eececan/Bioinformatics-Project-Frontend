@@ -10,9 +10,9 @@
       </h2>
     </div>
 
-    <v-row justify="center" class="z-index-1 position-relative">
+    <v-row justify="center" class="z-index-1 position-relative mt-5">
       <v-col cols="12" md="6" lg="5">
-        <v-card class="pa-6 rounded-lg elevation-10">
+        <v-card class="pa-6 rounded-lg elevation-10" style="height:450px">
           <v-form @submit.prevent="submitSearch">
             <v-textarea
                 v-model="mirnas"
@@ -71,14 +71,13 @@
 
       <v-col cols="12" md="6" class="d-flex flex-column align-center justify-center">
         <div v-if="!showOutput && !isLoading" class="text-center">
-          <v-icon size="120" color="grey lighten-1">mdi-graph-outline</v-icon> <!-- Changed icon slightly -->
+          <v-icon size="120" color="grey lighten-1">mdi-graph-outline</v-icon>
           <p class="mt-2 text-subtitle-2 text-grey">Your network or table will be shown here.</p>
         </div>
         <div v-if="isLoading && !showOutput" class="text-center fill-height d-flex flex-column justify-center align-center">
           <v-progress-circular indeterminate color="green darken-1" size="64"></v-progress-circular>
           <p class="mt-4 text-subtitle-2 text-grey">Loading data for {{ inputtedMirna }}...</p>
         </div>
-
 
         <div v-if="showOutput && !isLoading" class="w-100">
           <div class="d-flex justify-end mb-2">
@@ -97,18 +96,19 @@
               v-if="viewMode === 'graph'"
               id="network-visualization-container"
               class="pa-4 elevation-2 rounded-lg"
-              style="width: 100%; height: 450px; background-color: #f0f2f5; border: 1px solid #ccc; overflow: hidden;"
+              style="width: 100%; height: 400px; background-color: #f0f2f5; border: 1px solid #ccc; overflow: hidden;"
           >
             <v-network-graph
-                v-if="processedGraphNodes.length"
-            :nodes="processedGraphNodes"
-            :edges="processedGraphEdges"
-            :layouts="graphLayouts"
-            :configs="graphConfigs"
-            class="graph-bg"
-            style="width: 100%; height: 100%;"
+                v-if="Object.keys(processedGraphNodes).length"
+                :key="graphDataKey"
+                :nodes="processedGraphNodes"
+                :edges="processedGraphEdges"
+                :layouts="graphLayouts"
+                :configs="graphConfigs"
+                class="graph-bg"
+                style="width: 100%; height: 100%;"
             />
-            <div v-else-if="isLoading" class="d-flex justify-center align-center fill-height"> <!-- Should be caught by outer isLoading -->
+            <div v-else-if="isLoading" class="d-flex justify-center align-center fill-height">
               <v-progress-circular indeterminate color="green darken-1" size="50"></v-progress-circular>
             </div>
             <p v-else class="text-center text-grey-darken-2 mt-10 d-flex flex-column justify-center align-center fill-height">
@@ -120,10 +120,10 @@
           <div
               v-else-if="viewMode === 'table'"
               class="pa-4 elevation-2 rounded-lg"
-              style="width: 100%; min-height: 300px; max-height: 450px; background-color: #ffffff; border: 1px solid #ccc; overflow-y: auto;"
+              style="width: 100%; height: 420px; background-color: #ffffff; border: 1px solid #ccc; overflow-y: auto;"
           >
             <div v-if="filteredPredictions.length">
-              <v-table dense> <!-- Replaced v-simple-table with v-table -->
+              <v-table dense>
                 <thead>
                 <tr>
                   <th>miRNA</th>
@@ -160,34 +160,37 @@
 import { ref, computed, onMounted, onUnmounted, reactive } from 'vue';
 import axios from 'axios';
 import neo4j from 'neo4j-driver';
-import { VNetworkGraph, defineConfigs } from "v-network-graph"; // Import defineConfigs
+import { VNetworkGraph, defineConfigs } from "v-network-graph";
 import "v-network-graph/lib/style.css";
 
-// --- Page State --- (same as before)
+// --- Page State ---
 const mirnas = ref('');
 const inputtedMirna = ref('');
 const selectedHeuristics = ref([]);
-const mergeStrategy = ref(null);
-const viewMode = ref('table');
+const mergeStrategy = ref('union');
+const viewMode = ref('graph');
 const showOutput = ref(false);
 const isLoading = ref(false);
+const graphDataKey = ref(0);
 
-// --- Data --- (same as before)
+// --- Data ---
 const rawPredictions = ref([]);
-const graphData = ref({ nodes: [], relationships: [] });
+const graphData = ref({ nodes: [], relationships: [] }); // Raw data from Neo4j (arrays)
 
-// --- Constants --- (same as before)
+// --- Constants ---
 const heuristics = ['RNA22', 'PicTar', 'miRTarBase', 'TargetScan'];
 const strategies = ['union', 'intersection', 'at least two tools'];
 
-// --- Neo4j Driver Setup --- (same as before)
+// --- Neo4j Driver Setup ---
 const NEO4J_URI = 'bolt://localhost:7687';
 const NEO4J_USER = 'neo4j';
-const NEO4J_PASSWORD = 'test1234'; // ### IMPORTANT: Replace with your Neo4j password ###
+const NEO4J_PASSWORD = 'test1234';
 let driver;
 
-// --- v-network-graph Configurations ---
-// Use defineConfigs for better type inference and structure
+const graphLayouts = reactive({
+  nodes: {}, // For dynamic graph, let v-network-graph auto-layout
+});
+
 const graphConfigs = defineConfigs({
   view: {
     zoomEnabled: true,
@@ -206,22 +209,14 @@ const graphConfigs = defineConfigs({
       margin: 4,
       direction: "south",
     },
-    // normal, hover, selected states will primarily use properties set on individual node objects
-    // These act as fallbacks if properties are not on the node object itself.
-    normal: {
-      // Radius will be determined by node.radius (from processedGraphNodes)
-      // Color will be determined by node.color (from processedGraphNodes)
-      radius: node => node.radius || 8, // Fallback radius
-      color: node => node.color || "#88c0d0", // Fallback color
+    normal: { // These can now directly access properties if defined on the node value
+      radius: node => node.radius || 8, // Assuming 'radius' is a property on the node value
+      color: node => node.color || "#88c0d0",   // Assuming 'color' is a property on the node value
     },
     hover: {
-      // Let hover effects be handled by default or specific node properties if set
-      // Example: make it slightly larger on hover
       radius: node => (node.radius || 8) + 2,
-      color: node => node.color || "#88c0d0", // Keep color or specify a hover color
     },
     selected: {
-      // color: "#ffcc00", // Can be set per node too
       strokeWidth: 2,
       strokeColor: "#EAB308"
     }
@@ -229,97 +224,77 @@ const graphConfigs = defineConfigs({
   edge: {
     selectable: true,
     hoverable: true,
-    normal: {
-      width: 1.5, // Slightly thicker default
-      color: "#607D8B", // Darker default color for better visibility
-    },
-    hover: {
-      width: 2.5,
-      color: "#37474F",
-    },
-    selected: {
-      width: 2.5,
-      color: "#FF9800" // Brighter selection color
-    },
+    normal: { width: 2, color: "red" },
+    hover: { width: 3, color: "darkred" },
+    selected: { width: 3, color: "orange" },
     label: {
       visible: true,
-      fontSize: 9, // Slightly larger for visibility
+      text: "name",
+      fontSize: 10,
       fontFamily: "Roboto, sans-serif",
-      color: "#263238", // Darker label color
+      color: "black",
       background: {
         visible: true,
-        color: "rgba(255, 255, 255, 0.85)",
-        padding: {
-          vertical: 1,
-          horizontal: 3
-        },
+        color: "rgba(255, 255, 255, 0.7)",
+        padding: {vertical: 1, horizontal: 3},
         borderRadius: 3
       }
     },
-    gap: 20, // Increased gap slightly
+    gap: 15,
     marker: {
       target: {
         type: "arrow",
-        width: 4, // Slightly larger arrow
-        height: 4,
-        margin: -2,
-        units: "strokeWidth",
-        color: null,
+        width: 5, height: 5,
+        margin: -2.5, units: "strokeWidth",
+        color: "red",
       },
     },
   },
 });
 
-
-// Process raw graphData for v-network-graph
+// MODIFIED: processedGraphNodes returns an OBJECT
 const processedGraphNodes = computed(() => {
-  return graphData.value.nodes.map(node => ({
-    id: node.id,
-    name: node.label, // Used for the label text by default
-    // **Set radius and color directly on the node object**
-    radius: node.type === 'microRNA' ? 12 : (node.type === 'Pathway' ? 10 : 8), // Adjusted sizes
-    color: node.type === 'microRNA' ? '#03A9F4' : (node.type === 'Pathway' ? '#FF5722' : '#4CAF50'), // Brighter example colors
-    // Keep these for potential custom tooltips or interactions
-    properties: node.properties,
-    type: node.type,
-    // You can add specific hover/selected styles here too if needed
-    // hover: { color: "...", radius: ... },
-    // selected: { color: "..." }
-  }));
+  const nodesObject = {};
+  if (graphData.value.nodes) {
+    for (const node of graphData.value.nodes) {
+      const nodeId = String(node.id);
+      nodesObject[nodeId] = {
+        name: node.label,
+        // Pass through specific properties for styling if defined on original node
+        radius: node.type === 'microRNA' ? 12 : (node.type === 'Pathway' ? 10 : 8),
+        color: node.type === 'microRNA' ? '#03A9F4' : (node.type === 'Pathway' ? '#FF5722' : '#4CAF50'),
+        // Original properties for potential future use (e.g. tooltips)
+        // _properties: node.properties,
+        // _type: node.type
+      };
+    }
+  }
+  return nodesObject;
 });
 
+// MODIFIED: processedGraphEdges returns an OBJECT
 const processedGraphEdges = computed(() => {
-  return graphData.value.relationships.map(rel => ({
-    id: rel.id,
-    source: rel.source,
-    target: rel.target,
-    // Ensure the 'label' property is what you want displayed on the edge
-    name: rel.label, // v-network-graph's edge label text comes from 'name' by default, or use config.edge.label.text
-    // Alternatively, if you want to use 'label' directly for text, adjust config:
-    // configs.edge.label.text = "label"
-    properties: rel.properties,
-    // You can add per-edge styling too:
-    // color: determineEdgeColor(rel.type),
-    // width: determineEdgeWidth(rel.type),
-  }));
+  const edgesObject = {};
+  if (graphData.value.relationships) {
+    for (const rel of graphData.value.relationships) {
+      const edgeId = String(rel.id);
+      edgesObject[edgeId] = {
+        source: String(rel.source),
+        target: String(rel.target),
+        name: rel.label, // For edge label
+        // _properties: rel.properties // Original properties
+      };
+    }
+  }
+  return edgesObject;
 });
-
-
-// --- Vue Lifecycle and Methods ---
-// onMounted, onUnmounted, fetchTableData, fetchGraphData, submitSearch, toggleViewMode
-// remain THE SAME as the previous corrected version.
-// Make sure the fetchGraphData populates graphData.value.nodes and graphData.value.relationships
-// with 'id', 'label', 'type', 'properties' for nodes
-// and 'id', 'source', 'target', 'label' (for type), 'properties' for relationships.
 
 onMounted(() => {
   try {
     driver = neo4j.driver(NEO4J_URI, neo4j.auth.basic(NEO4J_USER, NEO4J_PASSWORD));
     driver.verifyConnectivity()
         .then(() => console.log('Neo4j driver connected and verified.'))
-        .catch(error => {
-          console.error('Neo4j driver verification failed:', error);
-        });
+        .catch(error => console.error('Neo4j driver verification failed:', error));
   } catch (error) {
     console.error('Failed to initialize Neo4j driver:', error);
   }
@@ -338,15 +313,18 @@ onUnmounted(async () => {
 
 async function fetchTableData(mirnaName) {
   try {
-    const response = await axios.get(`/api/mirna/predictions?name=${mirnaName}`);
+    const response = await axios.get(`http://localhost:8080/api/mirna/predictions?name=${mirnaName}`);
     const predictionsArray = Array.isArray(response.data.predictions) ? response.data.predictions : [];
     rawPredictions.value = predictionsArray.flatMap(pred =>
-        (pred.pathways || []).map(pathway => ({
-          gene: pred.gene,
+        (pred.pathways && pred.pathways.length > 0 ? pred.pathways : ["N/A"]).map(pathway => ({
+          gene: pred.gene_symbol || pred.gene || "N/A",
           tools: pred.tools || [],
           pathways: [pathway],
         }))
     );
+    if (!rawPredictions.value.length) {
+      console.log(`Table: No predictions found for ${mirnaName} or data format issue.`);
+    }
   } catch (error) {
     console.error(`Error fetching table predictions for ${mirnaName}:`, error);
     rawPredictions.value = [];
@@ -356,125 +334,115 @@ async function fetchTableData(mirnaName) {
 async function fetchGraphData(mirnaNameToSearch) {
   if (!driver) {
     console.error('Neo4j driver not available.');
-    graphData.value = { nodes: [], relationships: [] };
+    graphData.value = {nodes: [], relationships: []};
     return;
   }
-
-  const session = driver.session({ database: 'neo4j' });
-  const tempNodes = new Map();
-  const tempRelationships = [];
+  const session = driver.session({database: 'neo4j'});
+  const tempNodes = []; // Keep as array from Neo4j
+  const tempRelationships = []; // Keep as array from Neo4j
+  const seenNodeIds = new Set();
   const seenRelationshipIds = new Set();
 
+  console.log(`[DEBUG] fetchGraphData: Starting search for miRNA: "${mirnaNameToSearch}"`);
   try {
     const result = await session.run(
         `MATCH (mir:microRNA {name: $mirnaNameParam})
        OPTIONAL MATCH (mir)-[r_tool:PicTar|RNA22|TargetScan|miRTarBase]->(target:Target)
        OPTIONAL MATCH (target)-[r_path:PART_OF_PATHWAY]->(pathway:Pathway)
        RETURN mir, r_tool, target, r_path, pathway`,
-        { mirnaNameParam: mirnaNameToSearch }
+        {mirnaNameParam: mirnaNameToSearch}
     );
+    console.log(`[DEBUG] fetchGraphData: Neo4j query returned ${result.records.length} records.`);
 
-    let primaryMirnaNodeFoundInResults = null;
-
-    result.records.forEach(record => {
+    result.records.forEach((record) => {
       const mirnaNodeData = record.get('mir');
       const toolRel = record.get('r_tool');
       const targetNodeData = record.get('target');
       const pathwayRel = record.get('r_path');
       const pathwayNodeData = record.get('pathway');
 
-      if (mirnaNodeData && mirnaNodeData.elementId) {
-        if (!primaryMirnaNodeFoundInResults && mirnaNodeData.properties.name === mirnaNameToSearch) {
-          primaryMirnaNodeFoundInResults = mirnaNodeData;
-        }
-        if (!tempNodes.has(mirnaNodeData.elementId)) {
-          tempNodes.set(mirnaNodeData.elementId, {
-            id: mirnaNodeData.elementId,
-            label: mirnaNodeData.properties.name || mirnaNodeData.properties.accession || 'miRNA',
-            properties: mirnaNodeData.properties,
-            type: mirnaNodeData.labels[0] || 'microRNA', // Keep this for styling logic
-            group: 1, // Original group, can be used if needed
-          });
-        }
+      if (mirnaNodeData && mirnaNodeData.elementId && !seenNodeIds.has(mirnaNodeData.elementId)) {
+        tempNodes.push({
+          id: mirnaNodeData.elementId,
+          label: mirnaNodeData.properties.name || mirnaNodeData.properties.accession || 'miRNA',
+          properties: mirnaNodeData.properties,
+          type: mirnaNodeData.labels[0] || 'microRNA',
+        });
+        seenNodeIds.add(mirnaNodeData.elementId);
       }
-      if (targetNodeData && targetNodeData.elementId && !tempNodes.has(targetNodeData.elementId)) {
-        tempNodes.set(targetNodeData.elementId, {
+      if (targetNodeData && targetNodeData.elementId && !seenNodeIds.has(targetNodeData.elementId)) {
+        tempNodes.push({
           id: targetNodeData.elementId,
           label: targetNodeData.properties.name || targetNodeData.properties.ens_code || 'Target',
           properties: targetNodeData.properties,
           type: targetNodeData.labels[0] || 'Target',
-          group: 2,
         });
+        seenNodeIds.add(targetNodeData.elementId);
       }
-      if (pathwayNodeData && pathwayNodeData.elementId && !tempNodes.has(pathwayNodeData.elementId)) {
-        tempNodes.set(pathwayNodeData.elementId, {
+      if (pathwayNodeData && pathwayNodeData.elementId && !seenNodeIds.has(pathwayNodeData.elementId)) {
+        tempNodes.push({
           id: pathwayNodeData.elementId,
           label: pathwayNodeData.properties.name || pathwayNodeData.properties.id || 'Pathway',
           properties: pathwayNodeData.properties,
           type: pathwayNodeData.labels[0] || 'Pathway',
-          group: 3,
         });
+        seenNodeIds.add(pathwayNodeData.elementId);
       }
+
       if (toolRel && toolRel.elementId && !seenRelationshipIds.has(toolRel.elementId)) {
-        if (tempNodes.has(toolRel.startNodeElementId) && tempNodes.has(toolRel.endNodeElementId)) {
+        // Check if source and target nodes for this rel were actually added
+        if (seenNodeIds.has(toolRel.startNodeElementId) && seenNodeIds.has(toolRel.endNodeElementId)) {
           tempRelationships.push({
             id: toolRel.elementId,
             source: toolRel.startNodeElementId,
             target: toolRel.endNodeElementId,
-            label: toolRel.type, // This will be used for the edge 'name'
+            label: toolRel.type,
             properties: toolRel.properties,
           });
           seenRelationshipIds.add(toolRel.elementId);
         }
       }
       if (pathwayRel && pathwayRel.elementId && !seenRelationshipIds.has(pathwayRel.elementId)) {
-        if (tempNodes.has(pathwayRel.startNodeElementId) && tempNodes.has(pathwayRel.endNodeElementId)) {
+        if (seenNodeIds.has(pathwayRel.startNodeElementId) && seenNodeIds.has(pathwayRel.endNodeElementId)) {
           tempRelationships.push({
             id: pathwayRel.elementId,
             source: pathwayRel.startNodeElementId,
             target: pathwayRel.endNodeElementId,
-            label: pathwayRel.type, // This will be used for the edge 'name'
+            label: pathwayRel.type,
             properties: pathwayRel.properties,
           });
           seenRelationshipIds.add(pathwayRel.elementId);
         }
       }
     });
-
-    const finalNodes = Array.from(tempNodes.values());
-    if (primaryMirnaNodeFoundInResults || (finalNodes.length > 0 && result.records.length > 0) ) {
-      graphData.value = { nodes: finalNodes, relationships: tempRelationships };
-    } else if (result.records.length === 0) {
-      console.log(`Graph: miRNA "${mirnaNameToSearch}" not found in the database.`);
-      graphData.value = { nodes: [], relationships: [] };
+    // Now assign the collected arrays to graphData.value
+    // The computed properties (processedGraphNodes/Edges) will convert them to objects
+    if (tempNodes.length > 0 || tempRelationships.length > 0) {
+      graphData.value = {nodes: tempNodes, relationships: tempRelationships};
     } else {
-      console.log(`Graph: No graph data constructed for "${mirnaNameToSearch}" after processing records.`);
-      graphData.value = { nodes: [], relationships: [] };
+      graphData.value = {nodes: [], relationships: []}; // Ensure it's reset
+      if (result.records.length === 0) console.log(`[DEBUG] fetchGraphData: miRNA "${mirnaNameToSearch}" not found (0 records).`);
+      else console.warn(`[DEBUG] fetchGraphData: No valid graph data constructed for "${mirnaNameToSearch}".`);
     }
 
   } catch (error) {
-    console.error(`Error fetching graph data for ${mirnaNameToSearch}:`, error);
-    graphData.value = { nodes: [], relationships: [] };
+    console.error(`[DEBUG] fetchGraphData: Error for ${mirnaNameToSearch}:`, error);
+    graphData.value = {nodes: [], relationships: []};
   } finally {
-    if (session) {
-      await session.close();
-    }
+    if (session) await session.close();
   }
 }
 
 async function submitSearch() {
   isLoading.value = true;
   showOutput.value = false;
+  graphDataKey.value++;
+
   const currentMirnasInput = mirnas.value;
-
   rawPredictions.value = [];
-  graphData.value = { nodes: [], relationships: [] };
+  graphData.value = {nodes: [], relationships: []};
 
-  const mirnaList = currentMirnasInput
-      .split(/[\n,]+/)
-      .map(m => m.trim())
-      .filter(Boolean);
-
+  const mirnaList = currentMirnasInput.split(/[\n,]+/).map(m => m.trim()).filter(Boolean);
   inputtedMirna.value = mirnaList.join(', ') || "N/A";
 
   if (mirnaList.length === 1) {
@@ -484,10 +452,14 @@ async function submitSearch() {
       fetchTableData(singleMirna),
       fetchGraphData(singleMirna)
     ]);
+    // Log the OBJECTS after processing
+    console.log("[AFTER FETCH] Processed Nodes Object:", JSON.parse(JSON.stringify(processedGraphNodes.value)));
+    console.log("[AFTER FETCH] Processed Edges Object:", JSON.parse(JSON.stringify(processedGraphEdges.value)));
+
   } else if (mirnaList.length > 1) {
-    alert('Multiple miRNAs entered. Graph view currently supports single miRNA only. Table view will attempt to load data for the first miRNA listed.');
+    alert('Multiple miRNAs entered. Graph view supports single miRNA only. Table view will attempt to load data for the first miRNA listed if available.');
     if (mirnaList.length > 0) await fetchTableData(mirnaList[0]);
-    graphData.value = { nodes: [], relationships: [] };
+    viewMode.value = 'table';
   } else {
     alert('Please enter at least one miRNA.');
   }
@@ -495,33 +467,39 @@ async function submitSearch() {
   isLoading.value = false;
   showOutput.value = true;
 
-  if (mirnaList.length === 1 && processedGraphNodes.value.length > 0) {
+  // Update v-if for dynamic graph to check Object keys
+  if (mirnaList.length === 1 && Object.keys(processedGraphNodes.value).length > 0) {
     viewMode.value = 'graph';
-  } else if (filteredPredictions.value.length > 0) { // Ensure this is also checked
+  } else if (filteredPredictions.value.length > 0) {
     viewMode.value = 'table';
-  } else {
+  } else if (mirnaList.length === 1) {
     viewMode.value = 'graph';
+  } else {
+    viewMode.value = 'table';
   }
 }
 
 const filteredPredictions = computed(() => {
-  if (!rawPredictions.value || rawPredictions.value.length === 0) {
-    return [];
+  if (!rawPredictions.value || rawPredictions.value.length === 0) return [];
+  let predictionsByTool = rawPredictions.value;
+  if (selectedHeuristics.value.length > 0) {
+    predictionsByTool = rawPredictions.value.filter(prediction =>
+        prediction.tools && prediction.tools.some(tool => selectedHeuristics.value.includes(tool))
+    );
   }
-  return rawPredictions.value.filter(prediction => {
-    const hasSelectedTool = selectedHeuristics.value.length === 0 || (prediction.tools && prediction.tools.some(tool => selectedHeuristics.value.includes(tool)));
-    if (!hasSelectedTool) {
-      return false;
-    }
+  if (selectedHeuristics.value.length > 0) {
     if (mergeStrategy.value === 'intersection') {
-      return selectedHeuristics.value.length > 0 && prediction.tools && selectedHeuristics.value.every(tool => prediction.tools.includes(tool));
+      return predictionsByTool.filter(prediction =>
+          prediction.tools && selectedHeuristics.value.every(tool => prediction.tools.includes(tool))
+      );
     } else if (mergeStrategy.value === 'at least two tools') {
-      return selectedHeuristics.value.length > 0 && prediction.tools && prediction.tools.filter(tool => selectedHeuristics.value.includes(tool)).length >= 2;
+      return predictionsByTool.filter(prediction =>
+          prediction.tools && prediction.tools.filter(tool => selectedHeuristics.value.includes(tool)).length >= 2
+      );
     }
-    return true;
-  });
+  }
+  return predictionsByTool;
 });
-
 
 function toggleViewMode() {
   viewMode.value = viewMode.value === 'graph' ? 'table' : 'graph';
@@ -530,52 +508,11 @@ function toggleViewMode() {
 </script>
 
 <style scoped>
-.fill-height {
-  height: 100%;
-}
-
-.bio-bg {
-  background: linear-gradient(135deg, #e0f7fa, #f0faee);
-  position: relative;
-  overflow: hidden;
-  min-height: 100vh;
-}
-
-.dna-bg::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 0;
-  background-repeat: repeat;
-  background-position: 0 0;
-  background-size: 300px 800px;
-  opacity: 0.12;
-  animation: scrollBackground 40s linear infinite;
-  background-image: url("data:image/svg+xml,%3Csvg width='300' height='800' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%2388c0d0' stroke-width='3'%3E%3Cpath d='M150 0 C280 50, 20 150, 150 200 C280 250, 20 350, 150 400 C280 450, 20 550, 150 600 C280 650, 20 750, 150 800'/%3E%3C/g%3E%3Cg fill='%23cba8ff'%3E%3Ccircle cx='150' cy='50' r='4'/%3E%3Ccircle cx='150' cy='150' r='4'/%3E%3Ccircle cx='150' cy='250' r='4'/%3E%3Ccircle cx='150' cy='350' r='4'/%3E%3Ccircle cx='150' cy='450' r='4'/%3E%3Ccircle cx='150' cy='550' r='4'/%3E%3Ccircle cx='150' cy='650' r='4'/%3E%3Ccircle cx='150' cy='750' r='4'/%3E%3C/g%3E%3C/svg%3E");
-}
-
-@keyframes scrollBackground {
-  0% {
-    background-position: 0 0;
-  }
-  100% {
-    background-position: 0 800px;
-  }
-}
-
-.z-index-1 {
-  z-index: 1;
-  position: relative;
-}
-
-/* Optional: Style the graph background if needed */
-.graph-bg {
-  background-color: #f0f2f5; /* Match container or choose another */
-}
-.fill-height {
-  height: 100%;
-}
+/* Styles remain the same */
+.fill-height { height: 100%; }
+.bio-bg { background: linear-gradient(135deg, #e0f7fa, #f0faee); position: relative; overflow: hidden; min-height: 100vh; }
+.dna-bg::before { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 0; background-repeat: repeat; background-position: 0 0; background-size: 300px 800px; opacity: 0.12; animation: scrollBackground 40s linear infinite; background-image: url("data:image/svg+xml,%3Csvg width='300' height='800' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%2388c0d0' stroke-width='3'%3E%3Cpath d='M150 0 C280 50, 20 150, 150 200 C280 250, 20 350, 150 400 C280 450, 20 550, 150 600 C280 650, 20 750, 150 800'/%3E%3C/g%3E%3Cg fill='%23cba8ff'%3E%3Ccircle cx='150' cy='50' r='4'/%3E%3Ccircle cx='150' cy='150' r='4'/%3E%3Ccircle cx='150' cy='250' r='4'/%3E%3Ccircle cx='150' cy='350' r='4'/%3E%3Ccircle cx='150' cy='450' r='4'/%3E%3Ccircle cx='150' cy='550' r='4'/%3E%3Ccircle cx='150' cy='650' r='4'/%3E%3Ccircle cx='150' cy='750' r='4'/%3E%3C/g%3E%3C/svg%3E"); }
+@keyframes scrollBackground { 0% { background-position: 0 0; } 100% { background-position: 0 800px; } }
+.z-index-1 { z-index: 1; position: relative; }
+.w-100 { width: 100%; }
 </style>
