@@ -108,21 +108,34 @@
 
           <div
               v-if="viewMode === 'graph'"
-              id="network-visualization-container"
+              id="network-visualization-container-wrapper"
               class="pa-4 elevation-2 rounded-lg"
-              style="width: 100%; height: 400px; background-color: #f0f2f5; border: 1px solid #ccc; overflow: hidden;"
+              style="width: 100%; height: 400px; background-color: #f0f2f5; border: 1px solid #ccc; overflow: hidden; position: relative;"
           >
-            <v-network-graph
-                v-if="Object.keys(processedGraphNodes).length"
-                :key="graphDataKey"
-                :nodes="processedGraphNodes"
-                :edges="processedGraphEdges"
-                :configs="graphConfigs"
-                class="graph-bg"
-                style="width: 100%; height: 100%;"
-            />
+            <template v-if="Object.keys(processedGraphNodes).length > 0 && !isLoading">
+              <v-network-graph
+                  ref="graphInstance"
+                  :key="graphDataKey"
+                  :nodes="processedGraphNodes"
+                  :edges="processedGraphEdges"
+                  :configs="graphConfigs"
+                  :event-handlers="graphEventHandlers"
+                  class="graph-bg"
+                  style="width: 100%; height: 100%;"
+              />
+              <div
+                  ref="edgeTooltipRef"
+                  class="edge-tooltip"
+                  :style="{ ...edgeTooltipPos, opacity: edgeTooltipOpacity }"
+              >
+                <div v-if="hoveredEdgeDetails">
+                  {{ hoveredEdgeDetails.name }}
+                </div>
+              </div>
+            </template>
             <div v-else-if="isLoading" class="d-flex justify-center align-center fill-height">
               <v-progress-circular indeterminate color="green darken-1" size="50"></v-progress-circular>
+              <p class="mt-2 text-subtitle-2 text-grey">Loading graph...</p>
             </div>
             <p v-else class="text-center text-grey-darken-2 mt-10 d-flex flex-column justify-center align-center fill-height">
               <span>No graph data found for "{{ inputtedMirna }}" from Neo4j.</span>
@@ -135,7 +148,6 @@
               class="pa-4 elevation-2 rounded-lg"
               style="width: 100%; height: 400px; background-color: #ffffff; border: 1px solid #ccc; overflow-y: auto;"
           >
-            <!-- Table content remains the same -->
             <div v-if="filteredPredictions.length">
               <v-table dense>
                 <thead>
@@ -171,15 +183,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, reactive } from 'vue';
+import {ref, computed, onMounted, onUnmounted, reactive, watch} from 'vue';
 import axios from 'axios';
 import neo4j from 'neo4j-driver';
-import { VNetworkGraph, defineConfigs } from "v-network-graph";
-import {
-  ForceLayout,
-  // ForceNodeDatum, // Not explicitly used if type inference works
-  // ForceEdgeDatum, // Not explicitly used if type inference works
-} from "v-network-graph/lib/force-layout"; // Correct import path
+import {VNetworkGraph, defineConfigs} from "v-network-graph";
+import {ForceLayout} from "v-network-graph/lib/force-layout";
 import "v-network-graph/lib/style.css";
 
 // --- Page State ---
@@ -194,7 +202,7 @@ const graphDataKey = ref(0);
 
 // --- Data ---
 const rawPredictions = ref([]);
-const graphData = ref({ nodes: [], relationships: [] });
+const graphData = ref({nodes: [], relationships: []});
 
 // --- Constants ---
 const heuristics = ['RNA22', 'PicTar', 'miRTarBase', 'TargetScan'];
@@ -206,66 +214,53 @@ const NEO4J_USER = 'neo4j';
 const NEO4J_PASSWORD = 'test1234';
 let driver;
 
-// REMOVED: const graphLayouts = reactive({ nodes: {} });
-// Layout is now handled by layoutHandler in graphConfigs
+// --- Graph Instance and Tooltip Refs ---
+const graphInstance = ref();
+const edgeTooltipRef = ref();
+
+// --- Tooltip State ---
+const targetEdgeId = ref("");
+const edgeTooltipOpacity = ref(0);
+const edgeTooltipPos = ref({left: "0px", top: "0px"});
+const mousePosition = ref({x: 0, y: 0}); // Stores mouse coords relative to graph container
 
 const graphConfigs = defineConfigs({
   view: {
-    // zoomEnabled: true, // These are often defaults or can be added back if needed
-    // panEnabled: true,
-    // autoPanAndZoomOnLoad: "center-content", // ForceLayout will handle initial positioning
-    // fitContentMargin: "10%",
     layoutHandler: new ForceLayout({
-      positionFixedByDrag: false, // Nodes are not fixed after dragging
-      positionFixedByClickWithAltKey: true, // Fix node position by Alt+Click
-      // Performance settings for larger graphs (can be adjusted)
-      // These are just examples; you'll need to experiment
-      simulationTime: 2000, // How long the simulation runs (milliseconds)
-      // alphaTarget: 0.1, // Adjust for how quickly simulation cools down
-
-      // createSimulation function to customize D3 force simulation
+      positionFixedByDrag: false,
+      positionFixedByClickWithAltKey: true,
+      simulationTime: 2000,
       createSimulation: (d3, nodes, edges) => {
-        // Typedefs for D3 data (optional but good for clarity if using TS or complex logic)
-        // type NodeDatum = ForceNodeDatum & { /* your custom node properties if any */ };
-        // type EdgeDatum = ForceEdgeDatum & { /* your custom edge properties if any */ };
-
-        const forceLink = d3.forceLink(edges)
-            .id(d => d.id) // Assumes your nodes have an 'id' property in the array passed to simulation
-            .distance(120) // INCREASED distance for a more relaxed layout
-            .strength(0.6); // Strength of the link force
-
-        return d3
-            .forceSimulation(nodes)
+        const forceLink = d3.forceLink(edges).id(d => d.id).distance(120).strength(0.6);
+        return d3.forceSimulation(nodes)
             .force("edge", forceLink)
-            .force("charge", d3.forceManyBody().strength(-1000)) // INCREASED repulsion
-            .force("center", d3.forceCenter().strength(0.02)) // Weaker center force for more spread
-            // .force("collide", d3.forceCollide().radius(node => (node.radius || 8) + 10).strength(0.8)) // Optional: prevent node overlap
-            .alphaMin(0.001); // When the simulation stops
+            .force("charge", d3.forceManyBody().strength(-1000))
+            .force("center", d3.forceCenter().strength(0.02))
+            .alphaMin(0.001);
       }
     }),
   },
   node: {
     selectable: true, hoverable: true,
-    label: { visible: true, fontFamily: "Roboto, sans-serif", fontSize: 10, color: "#333333", margin: 4, direction: "south", text: "name" },
-    normal: { radius: node => node.radius || 8, color: node => node.color || "#88c0d0" },
-    hover: { radius: node => (node.radius || 8) + 2 },
-    selected: { strokeWidth: 2, strokeColor: "#EAB308" }
+    label: {
+      visible: true,
+      fontFamily: "Roboto, sans-serif",
+      fontSize: 10,
+      color: "#333333",
+      margin: 4,
+      direction: "south",
+      text: "name"
+    },
+    normal: {radius: node => node.radius || 8, color: node => node.color || "#88c0d0"},
+    hover: {radius: node => (node.radius || 8) + 2},
+    selected: {strokeWidth: 2, strokeColor: "#EAB308"}
   },
-  edge: { // Using the minimalist blue label config that seemed to work for data
+  edge: {
     selectable: true, hoverable: true,
     normal: {width: 2, color: "red"},
     hover: {width: 3, color: "darkred"},
     selected: {width: 3, color: "orange"},
-    label: {
-      visible: true,
-      text: "name",
-      fontSize: 11,       // Adjusted to match example
-      fontFamily: "Roboto, sans-serif", // Kept your font
-      lineHeight: 1.1,
-      color: "#0000FF",   // BLUE for high visibility
-      margin: 4,
-      direction: "center",
-    },
+    label: {visible: false}, // Direct edge labels disabled for tooltip focus
     gap: 15,
     marker: {
       target: {type: "arrow", width: 5, height: 5, margin: -2.5, units: "strokeWidth", color: "red"}
@@ -273,16 +268,12 @@ const graphConfigs = defineConfigs({
   },
 });
 
-// processedGraphNodes and processedGraphEdges remain the same (returning OBJECTS)
 const processedGraphNodes = computed(() => {
   const nodesObject = {};
   if (graphData.value.nodes) {
     for (const node of graphData.value.nodes) {
       const nodeId = String(node.id);
       nodesObject[nodeId] = {
-        // For D3 force layout, it's good practice if the objects in the simulation
-        // also have an 'id' property that matches their key, though ForceLayout.id() handles it.
-        // id: nodeId, // You can add this if it helps with other d3 operations, but not strictly needed for v-network-graph's own rendering here
         name: node.label,
         radius: node.type === 'microRNA' ? 12 : (node.type === 'Pathway' ? 10 : 8),
         color: node.type === 'microRNA' ? '#03A9F4' : (node.type === 'Pathway' ? '#FF5722' : '#4CAF50'),
@@ -291,25 +282,88 @@ const processedGraphNodes = computed(() => {
   }
   return nodesObject;
 });
+
 const processedGraphEdges = computed(() => {
   const edgesObject = {};
   if (graphData.value.relationships) {
     for (const rel of graphData.value.relationships) {
       const edgeId = String(rel.id);
-      edgesObject[edgeId] = {
-        source: String(rel.source),
-        target: String(rel.target),
-        name: rel.label,
-      };
+      edgesObject[edgeId] = {source: String(rel.source), target: String(rel.target), name: rel.label,};
     }
   }
   return edgesObject;
 });
 
+const hoveredEdgeDetails = computed(() => {
+  if (!targetEdgeId.value || !processedGraphEdges.value[targetEdgeId.value]) {
+    return null;
+  }
+  return processedGraphEdges.value[targetEdgeId.value];
+});
 
-// onMounted, onUnmounted, fetchTableData, fetchGraphData, submitSearch, filteredPredictions, toggleViewMode
-// remain THE SAME as in your last provided full code.
-// I will paste them here for completeness but no changes are made to them in this step.
+watch(
+    [edgeTooltipOpacity, targetEdgeId, () => edgeTooltipRef.value],
+    () => {
+      if (!edgeTooltipRef.value || edgeTooltipOpacity.value === 0 || !targetEdgeId.value) {
+        return;
+      }
+
+      // Get the height of the tooltip itself
+      const tooltipHeight = edgeTooltipRef.value.offsetHeight;
+      const tooltipWidth = edgeTooltipRef.value.offsetWidth; // For horizontal centering if needed, or left offset
+
+      // Desired offsets from the cursor
+      const desiredOffsetYAboveCursor = 1; // How many pixels ABOVE the cursor the BOTTOM of the tooltip should be
+      const desiredOffsetXToLeftOfCursor = 6; // How many pixels to the LEFT of the cursor the RIGHT of the tooltip should be (or its start if not centering)
+
+
+      // Calculate top position: mouse Y - tooltip height - desired gap above
+      const top = mousePosition.value.y - tooltipHeight - desiredOffsetYAboveCursor;
+
+      // Calculate left position: mouse X - desired gap to the left - tooltip width (to place it to the left)
+      // Or, if you want the *cursor* to be 6px to the right of the tooltip's start:
+      // const left = mousePosition.value.x - desiredOffsetXToLeftOfCursor;
+      // Let's assume you want the tooltip to start 6px to the left of the cursor:
+      const left = mousePosition.value.x - desiredOffsetXToLeftOfCursor;
+
+
+      edgeTooltipPos.value = {
+        left: left + "px",
+        top: top + "px",
+      };
+    },
+    { flush: 'post' }
+);
+
+const graphEventHandlers = {
+  "edge:pointerover": (event) => {
+    // The 'event' argument for edge:pointerover in v-network-graph
+    // typically includes { edge: EdgeId, event: PointerEvent }
+    // We need the PointerEvent for clientX/clientY
+    const domPointerEvent = event.event; // Assuming 'event.event' is the DOM PointerEvent
+
+    if (domPointerEvent && typeof domPointerEvent.clientX === 'number' && typeof domPointerEvent.clientY === 'number') {
+      const graphContainerEl = graphInstance.value?.$el; // The main <v-network-graph> DOM element
+      if (graphContainerEl) {
+        const containerRect = graphContainerEl.getBoundingClientRect();
+        mousePosition.value = {
+          x: domPointerEvent.clientX - containerRect.left,
+          y: domPointerEvent.clientY - containerRect.top,
+        };
+      } else {
+        // Fallback or error if graph container element is not found
+        // This might happen if event fires before graphInstance is fully mounted/available
+        console.warn("Graph container element not found for tooltip positioning.");
+        mousePosition.value = {x: domPointerEvent.clientX, y: domPointerEvent.clientY}; // Less accurate
+      }
+    }
+    targetEdgeId.value = event.edge || "";
+    edgeTooltipOpacity.value = 1;
+  },
+  "edge:pointerout": () => {
+    edgeTooltipOpacity.value = 0;
+  },
+};
 
 onMounted(() => {
   try {
@@ -335,11 +389,7 @@ async function fetchTableData(mirnaName) {
         const geneName = pred.gene_symbol || pred.gene || "N/A";
         const toolsList = Array.isArray(pred.tools) ? pred.tools : [];
         const pathwaysList = Array.isArray(pred.pathways) && pred.pathways.length > 0 ? pred.pathways : ["N/A"];
-        return pathwaysList.map(pathway => ({
-          gene: geneName,
-          tools: toolsList,
-          pathways: [pathway],
-        }));
+        return pathwaysList.map(pathway => ({gene: geneName, tools: toolsList, pathways: [pathway],}));
       });
     } else {
       rawPredictions.value = [];
@@ -355,129 +405,191 @@ const filteredPredictions = computed(() => {
   if (!rawPredictions.value || rawPredictions.value.length === 0) return [];
   let filtered = rawPredictions.value;
   if (selectedHeuristics.value.length > 0) {
-    filtered = filtered.filter(prediction =>
-        prediction.tools && prediction.tools.some(tool => selectedHeuristics.value.includes(tool))
-    );
+    filtered = filtered.filter(prediction => prediction.tools && prediction.tools.some(tool => selectedHeuristics.value.includes(tool)));
   }
   if (selectedHeuristics.value.length > 0) {
     if (mergeStrategy.value === 'intersection') {
-      filtered = filtered.filter(prediction =>
-          prediction.tools && selectedHeuristics.value.every(tool => prediction.tools.includes(tool))
-      );
+      filtered = filtered.filter(prediction => prediction.tools && selectedHeuristics.value.every(tool => prediction.tools.includes(tool)));
     } else if (mergeStrategy.value === 'at least two tools') {
-      filtered = filtered.filter(prediction =>
-          prediction.tools && prediction.tools.filter(tool => selectedHeuristics.value.includes(tool)).length >= 2
-      );
+      filtered = filtered.filter(prediction => prediction.tools && prediction.tools.filter(tool => selectedHeuristics.value.includes(tool)).length >= 2);
     }
   }
   return filtered;
 });
 
-async function fetchGraphData(mirnaNameToSearch) {
+async function fetchGraphData(mirnaNameToSearch, selectedTools, strategy) {
   if (!driver) {
     console.error('Neo4j driver not available.');
-    graphData.value = {nodes: [], relationships: []};
-    return;
+    graphData.value = { nodes: [], relationships: [] };
+    return; // Early exit if no driver
   }
-  const session = driver.session({database: 'neo4j'});
-  const tempNodes = [];
-  const tempRelationships = [];
-  const seenNodeIds = new Set();
-  const seenRelationshipIds = new Set();
-  console.log(`[DEBUG] fetchGraphData: Starting search for miRNA: "${mirnaNameToSearch}"`);
+
+  // Initialize session variable, it will be assigned within the try-finally scope
+  let session;
+
   try {
-    const result = await session.run(`MATCH (mir:microRNA {name: $mirnaNameParam}) OPTIONAL MATCH (mir)-[r_tool:PicTar|RNA22|TargetScan|miRTarBase]->(target:Target) OPTIONAL MATCH (target)-[r_path:PART_OF_PATHWAY]->(pathway:Pathway) RETURN mir, r_tool, target, r_path, pathway`, {mirnaNameParam: mirnaNameToSearch});
+    session = driver.session({ database: 'neo4j' }); // Assign session here
+
+    const tempNodes = [];
+    const tempRelationships = [];
+    const seenNodeIds = new Set();
+    const seenRelationshipIds = new Set();
+
+    console.log(`[DEBUG] fetchGraphData: miRNA: "${mirnaNameToSearch}", Tools: ${selectedTools.join(', ')}, Strategy: ${strategy}`);
+
+    let cypherQuery = '';
+    const params = { mirnaNameParam: mirnaNameToSearch, selectedToolsParam: selectedTools };
+
+    const baseMatch = `MATCH (mir:microRNA {name: $mirnaNameParam}) `;
+    const returnClause = `RETURN mir, r_tool, target, r_path, pathway`;
+    const optionalPathwayMatch = `OPTIONAL MATCH (target)-[r_path:PART_OF_PATHWAY]->(pathway:Pathway) `;
+
+    if (selectedTools.length === 0) {
+      cypherQuery = `${baseMatch}
+                     OPTIONAL MATCH (mir)-[r_tool:PicTar|RNA22|TargetScan|miRTarBase]->(target:Target)
+                     ${optionalPathwayMatch}
+                     ${returnClause}`;
+    } else {
+      const toolRelTypesString = selectedTools.join('|'); // e.g., "PicTar|RNA22"
+
+      if (strategy === 'union') {
+        cypherQuery = `${baseMatch}
+                       OPTIONAL MATCH (mir)-[r_tool :${toolRelTypesString}]->(target:Target)
+                       ${optionalPathwayMatch}
+                       ${returnClause}`;
+      } else if (strategy === 'intersection') {
+        cypherQuery = `
+          MATCH (mir:microRNA {name: $mirnaNameParam})
+          CALL {
+              WITH mir
+              MATCH (mir)-[r_int]->(t_int:Target)
+              WHERE type(r_int) IN $selectedToolsParam
+              WITH mir, t_int, COLLECT(DISTINCT type(r_int)) AS tools
+              WHERE size(tools) = size($selectedToolsParam)
+              RETURN COLLECT(DISTINCT t_int) AS intersectionTargets
+          }
+          UNWIND intersectionTargets AS target
+          OPTIONAL MATCH (mir)-[r_tool :${toolRelTypesString}]->(target)
+          ${optionalPathwayMatch}
+          ${returnClause}`;
+      } else if (strategy === 'at least two tools') {
+        if (selectedTools.length < 2) {
+          alert("'At least two tools' strategy requires selecting at least two tools.");
+          graphData.value = { nodes: [], relationships: [] };
+          // No need to explicitly close session here, finally block will handle it.
+          return; // Exit the function
+        }
+        cypherQuery = `${baseMatch}
+                       CALL {
+                           WITH mir
+                           MATCH (mir)-[r_at_least_two]->(t_at_least_two:Target)
+                           WHERE type(r_at_least_two) IN $selectedToolsParam
+                           WITH mir, t_at_least_two, COLLECT(DISTINCT type(r_at_least_two)) AS tools
+                           WHERE size(tools) >= 2
+                           RETURN COLLECT(DISTINCT t_at_least_two) AS validTargets
+                       }
+                       UNWIND validTargets AS target
+                       OPTIONAL MATCH (mir)-[r_tool :${toolRelTypesString}]->(target)
+                       ${optionalPathwayMatch}
+                       ${returnClause}`;
+      } else { // Default to union
+        cypherQuery = `${baseMatch}
+                       OPTIONAL MATCH (mir)-[r_tool :${toolRelTypesString}]->(target:Target)
+                       ${optionalPathwayMatch}
+                       ${returnClause}`;
+      }
+    }
+
+    console.log("-----------------------------------");
+    console.log("[Cypher Debug] Strategy:", strategy);
+    console.log("[Cypher Debug] Selected Tools:", JSON.stringify(selectedTools));
+    console.log("[Cypher Debug] miRNA Name:", mirnaNameToSearch);
+    console.log("[Cypher Debug] Generated Cypher Query:\n", cypherQuery);
+    console.log("[Cypher Debug] Query Parameters:\n", JSON.stringify(params, null, 2));
+    console.log("-----------------------------------");
+
+    const result = await session.run(cypherQuery, params);
     console.log(`[DEBUG] fetchGraphData: Neo4j query returned ${result.records.length} records.`);
+
     result.records.forEach((record) => {
       const mirnaNodeData = record.get('mir');
       const toolRel = record.get('r_tool');
       const targetNodeData = record.get('target');
       const pathwayRel = record.get('r_path');
       const pathwayNodeData = record.get('pathway');
+
       if (mirnaNodeData && mirnaNodeData.elementId && !seenNodeIds.has(mirnaNodeData.elementId)) {
-        tempNodes.push({
-          id: mirnaNodeData.elementId,
-          label: mirnaNodeData.properties.name || 'miRNA',
-          properties: mirnaNodeData.properties,
-          type: mirnaNodeData.labels[0] || 'microRNA',
-        });
+        tempNodes.push({ id: mirnaNodeData.elementId, label: mirnaNodeData.properties.name || 'miRNA', properties: mirnaNodeData.properties, type: mirnaNodeData.labels[0] || 'microRNA' });
         seenNodeIds.add(mirnaNodeData.elementId);
       }
       if (targetNodeData && targetNodeData.elementId && !seenNodeIds.has(targetNodeData.elementId)) {
-        tempNodes.push({
-          id: targetNodeData.elementId,
-          label: targetNodeData.properties.name || 'Target',
-          properties: targetNodeData.properties,
-          type: targetNodeData.labels[0] || 'Target',
-        });
+        tempNodes.push({ id: targetNodeData.elementId, label: targetNodeData.properties.name || 'Target', properties: targetNodeData.properties, type: targetNodeData.labels[0] || 'Target' });
         seenNodeIds.add(targetNodeData.elementId);
       }
       if (pathwayNodeData && pathwayNodeData.elementId && !seenNodeIds.has(pathwayNodeData.elementId)) {
-        tempNodes.push({
-          id: pathwayNodeData.elementId,
-          label: pathwayNodeData.properties.name || 'Pathway',
-          properties: pathwayNodeData.properties,
-          type: pathwayNodeData.labels[0] || 'Pathway',
-        });
+        tempNodes.push({ id: pathwayNodeData.elementId, label: pathwayNodeData.properties.name || 'Pathway', properties: pathwayNodeData.properties, type: pathwayNodeData.labels[0] || 'Pathway' });
         seenNodeIds.add(pathwayNodeData.elementId);
       }
+
       if (toolRel && toolRel.elementId && !seenRelationshipIds.has(toolRel.elementId)) {
         if (seenNodeIds.has(toolRel.startNodeElementId) && seenNodeIds.has(toolRel.endNodeElementId)) {
-          tempRelationships.push({
-            id: toolRel.elementId,
-            source: toolRel.startNodeElementId,
-            target: toolRel.endNodeElementId,
-            label: toolRel.type,
-            properties: toolRel.properties,
-          });
+          tempRelationships.push({ id: toolRel.elementId, source: toolRel.startNodeElementId, target: toolRel.endNodeElementId, label: toolRel.type, properties: toolRel.properties });
           seenRelationshipIds.add(toolRel.elementId);
         }
       }
       if (pathwayRel && pathwayRel.elementId && !seenRelationshipIds.has(pathwayRel.elementId)) {
         if (seenNodeIds.has(pathwayRel.startNodeElementId) && seenNodeIds.has(pathwayRel.endNodeElementId)) {
-          tempRelationships.push({
-            id: pathwayRel.elementId,
-            source: pathwayRel.startNodeElementId,
-            target: pathwayRel.endNodeElementId,
-            label: pathwayRel.type,
-            properties: pathwayRel.properties,
-          });
+          tempRelationships.push({ id: pathwayRel.elementId, source: pathwayRel.startNodeElementId, target: pathwayRel.endNodeElementId, label: pathwayRel.type, properties: pathwayRel.properties });
           seenRelationshipIds.add(pathwayRel.elementId);
         }
       }
     });
+
     if (tempNodes.length > 0 || tempRelationships.length > 0) {
-      graphData.value = {nodes: tempNodes, relationships: tempRelationships};
+      graphData.value = { nodes: tempNodes, relationships: tempRelationships };
     } else {
-      graphData.value = {nodes: [], relationships: []};
-      if (result.records.length === 0) console.log(`[DEBUG] fetchGraphData: miRNA "${mirnaNameToSearch}" not found.`); else console.warn(`[DEBUG] fetchGraphData: No valid graph data for "${mirnaNameToSearch}".`);
+      graphData.value = { nodes: [], relationships: [] };
+      if (result.records.length === 0 && (strategy === 'intersection' || strategy === 'at least two tools')) {
+        console.log(`[DEBUG] fetchGraphData: No miRNA-target pairs found matching the '${strategy}' criteria with selected tools for ${mirnaNameToSearch}.`);
+      } else if (result.records.length === 0) {
+        console.log(`[DEBUG] fetchGraphData: miRNA "${mirnaNameToSearch}" not found or no connections with selected tools.`);
+      } else {
+        console.warn(`[DEBUG] fetchGraphData: No valid graph data constructed for "${mirnaNameToSearch}" with current filters, though records were found by Cypher query. Check node/relationship processing logic if records > 0.`);
+      }
     }
   } catch (error) {
-    console.error(`[DEBUG] fetchGraphData: Error for ${mirnaNameToSearch}:`, error);
-    graphData.value = {nodes: [], relationships: []};
+    console.error(`[DEBUG] fetchGraphData: Error for ${mirnaNameToSearch} with strategy ${strategy}:`, error);
+    console.error("Failed Cypher Query that caused error:\n", cypherQuery); // Log the failing query
+    console.error("Parameters for failed query:", params);
+    graphData.value = { nodes: [], relationships: [] };
   } finally {
-    if (session) await session.close();
+    if (session) {
+      console.log("[DEBUG] Closing Neo4j session in finally block.");
+      await session.close();
+    } else {
+      console.log("[DEBUG] Session was not defined or already closed when finally block reached.");
+    }
   }
 }
-
 async function submitSearch() {
   isLoading.value = true;
   showOutput.value = false;
   graphDataKey.value++;
   rawPredictions.value = [];
-  graphData.value = {nodes: [], relationships: []};
+  graphData.value = { nodes: [], relationships: [] };
   const currentMirnasInput = mirnas.value;
   const mirnaList = currentMirnasInput.split(/[\n,]+/).map(m => m.trim()).filter(Boolean);
   inputtedMirna.value = mirnaList.join(', ') || "N/A";
+
   if (mirnaList.length === 1) {
     const singleMirna = mirnaList[0];
     inputtedMirna.value = singleMirna;
     await Promise.all([
-      fetchTableData(singleMirna),
-      fetchGraphData(singleMirna)
+      fetchTableData(singleMirna), // Table data fetch remains unfiltered by these graph strategies
+      // MODIFIED: Pass selectedHeuristics and mergeStrategy to fetchGraphData
+      fetchGraphData(singleMirna, selectedHeuristics.value, mergeStrategy.value)
     ]);
-    // console.log("[AFTER FETCH] Processed Nodes Object for Graph:", JSON.parse(JSON.stringify(processedGraphNodes.value)));
-    // console.log("[AFTER FETCH] Processed Edges Object for Graph:", JSON.parse(JSON.stringify(processedGraphEdges.value)));
+    // ... (console logs remain the same)
   } else if (mirnaList.length > 1) {
     alert('Multiple miRNAs entered. Graph view supports single miRNA only. Table view will attempt to load data for the first miRNA listed if available.');
     if (mirnaList.length > 0) await fetchTableData(mirnaList[0]);
@@ -487,6 +599,7 @@ async function submitSearch() {
   }
   isLoading.value = false;
   showOutput.value = true;
+  // Default view logic remains the same
   if (mirnaList.length === 1 && Object.keys(processedGraphNodes.value).length > 0) {
     viewMode.value = 'graph';
   } else if (filteredPredictions.value.length > 0) {
@@ -497,15 +610,13 @@ async function submitSearch() {
     viewMode.value = 'table';
   }
 }
-
 function toggleViewMode() {
   viewMode.value = viewMode.value === 'graph' ? 'table' : 'graph';
 }
-
 </script>
 
 <style scoped>
-/* Styles remain the same */
+/* Styles for .fill-height, .bio-bg, .dna-bg, .z-index-1, .w-100 remain the same */
 .fill-height {
   height: 100%;
 }
@@ -549,5 +660,22 @@ function toggleViewMode() {
 
 .w-100 {
   width: 100%;
+}
+
+.edge-tooltip {
+  top: 0;
+  left: 0;
+  opacity: 0;
+  position: absolute;
+  padding: 6px 10px;
+  font-size: 12px;
+  background-color: #fff0bd;
+  border: 1px solid #ffb950;
+  border-radius: 4px;
+  box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
+  transition: opacity 0.2s ease-out;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 10;
 }
 </style>
