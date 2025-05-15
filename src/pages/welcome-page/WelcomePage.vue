@@ -42,7 +42,7 @@
             <v-select
                 v-model="selectedHeuristics"
                 :items="heuristics"
-                label="Select Heuristics (for Table View)"
+                label="Select Tools"
                 multiple
                 chips
                 outlined
@@ -60,7 +60,7 @@
             <v-select
                 v-model="mergeStrategy"
                 :items="strategies"
-                label="Merge Strategy (for Table View)"
+                label="Select Merge Strategy"
                 outlined
                 chips
                 class="mb-4 mt-4"
