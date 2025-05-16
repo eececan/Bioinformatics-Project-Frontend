@@ -194,7 +194,7 @@ import "v-network-graph/lib/style.css";
 const mirnas = ref('');
 const inputtedMirna = ref('');
 const selectedHeuristics = ref([]);
-const mergeStrategy = ref('union');
+const mergeStrategy = ref('union(only for testing)');
 const viewMode = ref('graph');
 const showOutput = ref(false);
 const isLoading = ref(false);
@@ -206,7 +206,7 @@ const graphData = ref({ nodes: [], relationships: [] });
 
 // --- Constants ---
 const heuristics = ['RNA22', 'PicTar', 'miRTarBase', 'TargetScan'];
-const strategies = ['union', 'intersection', 'at least two tools'];
+const strategies = ['union(only for testing)', 'intersection', 'at least two tools'];
 
 // --- Neo4j Driver Setup ---
 const NEO4J_URI = 'bolt://localhost:7687';
@@ -350,7 +350,7 @@ async function fetchGraphData(mirnaNameToSearch, selectedTools, strategy) {
     const optionalPathwayMatch = `OPTIONAL MATCH (target)-[r_path:PART_OF_PATHWAY]->(pathway:Pathway) `;
     const allDefaultToolTypes = `PicTar|RNA22|TargetScan|miRTarBase`; // For when no tools are selected
 
-    if (selectedTools.length === 0 || strategy === 'union') {
+    if (selectedTools.length === 0 || strategy === 'union(only for testing)') {
       // If no tools selected, or union strategy, show all connections by selected (or default) tools
       const toolsToMatch = selectedTools.length > 0 ? selectedTools.join('|') : allDefaultToolTypes;
       cypherQuery = `
@@ -455,12 +455,6 @@ async function fetchGraphData(mirnaNameToSearch, selectedTools, strategy) {
 
       // Create miRNA-Target edge (summary edge for intersection/at_least_two, individual for union/no_tools)
       if (mirnaNodeData && targetNodeData && toolsForEdge && toolsForEdge.length > 0) {
-        // For intersection/at_least_two, we want ONE edge summarizing all tools.
-        // For union/no_tools, toolsForEdge will contain only one tool per record path, so this still works
-        // to create distinct edges if the Cypher returns distinct r_tool_instance.
-        // However, the modified Cypher for union/no_tools might group them already.
-        // Let's ensure a unique conceptual edge per mir-target pair IF we intend to show only one.
-        // The label will be the list of tools.
         const mirTargetEdgeId = `edge-${mirnaNodeData.elementId}-to-${targetNodeData.elementId}`;
         if (!seenRelationshipIds.has(mirTargetEdgeId)) {
           if (seenNodeIds.has(mirnaNodeData.elementId) && seenNodeIds.has(targetNodeData.elementId)) {
