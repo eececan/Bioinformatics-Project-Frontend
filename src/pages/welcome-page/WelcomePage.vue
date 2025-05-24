@@ -9,7 +9,7 @@
     <!-- TITLE SECTION (Collapsible) -->
     <div
         class="text-center position-relative z-index-1"
-        :class="{ 'mb-0': !isTitleCollapsed, 'mb-4': isTitleCollapsed }"
+        :class="{ 'mb-8': !isTitleCollapsed, 'mb-4': isTitleCollapsed }"
         @click="toggleTitleCollapse"
         :style="isTitleCollapsed ? 'cursor: pointer;' : ''"
     >
@@ -45,18 +45,11 @@
                 <v-tooltip location="bottom">
                   <template #activator="{ props: tooltipProps }">
                     <v-chip
-                        v-bind="tooltipProps"
-                        @click="toggleSearchModeAndCollapseTitle"
-                        color="green-darken-1"
-                        variant="outlined"
-                        label
-                        small
-                        class="cursor-pointer"
-                        style="user-select: none;"
+                        v-bind="tooltipProps" @click="toggleSearchModeAndCollapseTitle" color="green-darken-1"
+                        variant="outlined" label small class="cursor-pointer" style="user-select: none;"
                         aria-label="Switch search mode"
                     >
-                      <v-icon left small class="mr-1">mdi-swap-horizontal-bold</v-icon>
-                      Switch
+                      <v-icon left small class="mr-1">mdi-swap-horizontal-bold</v-icon> Switch
                     </v-chip>
                   </template>
                   <span>Switch to {{ searchMode === 'single' ? 'Multiple miRNAs' : 'Single miRNA' }} Search Mode</span>
@@ -64,8 +57,7 @@
               </div>
 
               <v-textarea
-                  v-model="mirnas"
-                  :label="searchMode === 'single' ? 'Enter a single miRNA' : 'Enter miRNA(s)'"
+                  v-model="mirnas" :label="searchMode === 'single' ? 'Enter a single miRNA' : 'Enter miRNA(s)'"
                   auto-grow rows="1" outlined class="mb-4" persistent-hint hint=" "
               >
                 <template #append-inner>
@@ -99,9 +91,8 @@
               </v-select>
 
               <v-select
-                  v-if="searchMode === 'multiple'"
-                  v-model="heuristicStrategy" :items="heuristicStrategies" label="Select Multi-miRNA Heuristic Strategy"
-                  outlined chips class="mb-4 mt-4"
+                  v-if="searchMode === 'multiple'" v-model="heuristicStrategy" :items="heuristicStrategies"
+                  label="Select Multi-miRNA Heuristic Strategy" outlined chips class="mb-4 mt-4"
               >
                 <template #append>
                   <v-tooltip text="'union' = targets if any miRNA predicts them, 'intersection' = targets ONLY if ALL miRNAs predict them, 'majority' = targets if >50% of miRNAs predict them. (Affects Table View for multiple miRNAs)">
@@ -114,17 +105,9 @@
                 <v-btn type="submit" color="green darken-1" dark :loading="isLoading" class="mr-2">
                   <v-icon left>mdi-magnify</v-icon> Analyze
                 </v-btn>
-                <!-- Show Past Searches Button -->
                 <v-tooltip location="top" text="View past searches">
                   <template #activator="{ props: tooltipProps }">
-                    <v-btn
-                        v-bind="tooltipProps"
-                        icon
-                        variant="text"
-                        color="blue-grey-lighten-1"
-                        @click="showPastSearches"
-                        aria-label="Show past searches"
-                    >
+                    <v-btn v-bind="tooltipProps" icon variant="text" color="blue-grey-lighten-1" @click="showPastSearches" aria-label="Show past searches">
                       <v-icon>mdi-history</v-icon>
                     </v-btn>
                   </template>
@@ -145,39 +128,25 @@
           </div>
 
           <div v-if="showOutput && !isLoading" class="w-100">
-            <!-- MODIFIED: Button Grouping -->
             <div class="d-flex justify-end align-center mb-2">
               <v-btn
-                  color="green darken-1"
-                  @click="toggleViewMode"
-                  small
-                  dark
-                  :disabled="graphViewDisabled"
-                  class="mr-2"
+                  color="green darken-1" @click="toggleViewMode" small dark
+                  :disabled="graphViewDisabled" class="mr-2"
               >
                 <v-icon left>mdi-swap-horizontal</v-icon>
                 {{ viewMode === 'graph' ? 'Switch to Table View' : 'Switch to Graph View' }}
               </v-btn>
 
-              <!-- Export Table Button -->
               <v-tooltip location="top" text="Export current table data as CSV">
                 <template #activator="{ props: tooltipProps }">
                   <v-btn
                       v-if="viewMode === 'table' && filteredPredictions.length > 0"
-                      v-bind="tooltipProps"
-                      icon
-                      variant="outlined"
-                      color="green-darken-2"
-                      size="small"
-                      @click="exportTableData"
-                      aria-label="Export table data"
-                  >
-                    <v-icon>mdi-file-export-outline</v-icon>
-                  </v-btn>
+                      v-bind="tooltipProps" icon variant="outlined" color="blue-darken-2"
+                      size="small" @click="exportTableData" aria-label="Export table data"
+                  > <v-icon>mdi-file-export-outline</v-icon> </v-btn>
                 </template>
               </v-tooltip>
             </div>
-            <!-- END OF MODIFIED Button Grouping -->
 
 
             <div
@@ -186,6 +155,25 @@
                 class="pa-4 elevation-2 rounded-lg"
                 style="width: 100%; height: 400px; background-color: #f0f2f5; border: 1px solid #ccc; overflow: hidden; position: relative;"
             >
+              <!-- GRAPH HELP BUTTON -->
+              <v-tooltip location="left" max-width="300px">
+                <template #activator="{ props: tooltipProps }">
+                  <v-btn
+                      v-bind="tooltipProps"
+                      icon variant="text" size="x-small"
+                      style="position: absolute; top: 8px; right: 8px; z-index: 10;"
+                      aria-label="Graph Interaction Help"
+                      color="grey-darken-1"
+                  >
+                    <v-icon>mdi-help-circle-outline</v-icon>
+                  </v-btn>
+                </template>
+                <span>
+                    Drag nodes to rearrange. Scroll to zoom. Alt+Click a node to fix its position. Hover over edges to see relationship types.
+                </span>
+              </v-tooltip>
+              <!-- END GRAPH HELP BUTTON -->
+
               <template v-if="processedGraphNodes && typeof processedGraphNodes === 'object' && Object.keys(processedGraphNodes).length > 0 && !isLoading">
                 <v-network-graph
                     ref="graphInstance" :key="graphDataKey" :nodes="processedGraphNodes" :edges="processedGraphEdges"
@@ -210,6 +198,24 @@
                 class="pa-4 elevation-2 rounded-lg"
                 style="width: 100%; height: 400px; background-color: #ffffff; border: 1px solid #ccc; overflow-y: auto;"
             >
+              <!-- TABLE HELP BUTTON (Optional, if you want separate help for table) -->
+              <v-tooltip location="left" max-width="300px" v-if="false"> <!-- Set to true to enable -->
+                <template #activator="{ props: tooltipProps }">
+                  <v-btn
+                      v-bind="tooltipProps"
+                      icon variant="text" size="x-small"
+                      style="position: absolute; top: 8px; right: 8px; z-index: 10;"
+                      aria-label="Table View Help"
+                      color="grey-darken-1"
+                  >
+                    <v-icon>mdi-help-circle-outline</v-icon>
+                  </v-btn>
+                </template>
+                <span>This table shows predicted gene targets and their associated pathways based on your selections. You can filter by tools and merge strategies.</span>
+              </v-tooltip>
+              <!-- END TABLE HELP BUTTON -->
+
+
               <div v-if="filteredPredictions.length">
                 <v-table dense>
                   <thead> <tr> <th>miRNA(s)</th> <th>Tool(s)</th> <th>Gene</th> <th>Pathway(s)</th> </tr> </thead>
@@ -238,6 +244,7 @@
 </template>
 
 <script setup>
+// ... (all your existing script setup code remains the same)
 import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue';
 import axios from 'axios';
 import neo4j from 'neo4j-driver';
@@ -253,6 +260,7 @@ const searchMode = ref('single');
 
 const selectedHeuristics = ref([]);
 const mergeStrategy = ref('union(only for testing)');
+
 const heuristicStrategy = ref('union');
 const heuristicStrategies = ['union', 'intersection', 'majority'];
 
@@ -264,9 +272,11 @@ const graphDataKey = ref(0);
 const isTitleCollapsed = ref(false);
 const hasTitleBeenCollapsedByAction = ref(false);
 
+// --- Data ---
 const rawPredictions = ref([]);
 const graphData = ref({ nodes: [], relationships: [] });
 
+// --- Constants ---
 const heuristics = ['RNA22', 'PicTar', 'miRTarBase', 'TargetScan'];
 const strategies = ['union(only for testing)', 'intersection', 'at least two tools'];
 
@@ -287,7 +297,7 @@ const graphViewDisabled = computed(() => {
   return mirnaList.length > 1 && searchMode.value === 'multiple';
 });
 
-const graphConfigs = defineConfigs({ /* ... same as before ... */
+const graphConfigs = defineConfigs({
   view: {
     layoutHandler: new ForceLayout({
       positionFixedByDrag: false, positionFixedByClickWithAltKey: true, simulationTime: 2500,
@@ -315,7 +325,8 @@ const graphConfigs = defineConfigs({ /* ... same as before ... */
     marker: { target: {type: "arrow", width: 5, height: 5, margin: -2.5, units: "strokeWidth", color: "red"} }
   },
 });
-const processedGraphNodes = computed(() => { /* ... same as before ... */
+
+const processedGraphNodes = computed(() => {
   try {
     const nodesObject = {};
     if (graphData.value && graphData.value.nodes && Array.isArray(graphData.value.nodes)) {
@@ -334,7 +345,8 @@ const processedGraphNodes = computed(() => { /* ... same as before ... */
     return nodesObject;
   } catch (e) { console.error("Error inside processedGraphNodes computed property:", e); return {}; }
 });
-const processedGraphEdges = computed(() => { /* ... same as before ... */
+
+const processedGraphEdges = computed(() => {
   try {
     const edgesObject = {};
     if (graphData.value && graphData.value.relationships && Array.isArray(graphData.value.relationships)) {
@@ -350,11 +362,13 @@ const processedGraphEdges = computed(() => { /* ... same as before ... */
     return edgesObject;
   } catch (e) { console.error("Error inside processedGraphEdges computed property:", e); return {}; }
 });
-const hoveredEdgeDetails = computed(() => { /* ... same as before ... */
+
+const hoveredEdgeDetails = computed(() => {
   if (!targetEdgeId.value || !processedGraphEdges.value[targetEdgeId.value]) { return null; }
   return processedGraphEdges.value[targetEdgeId.value];
 });
-watch( /* ... same as before ... */
+
+watch(
     [edgeTooltipOpacity, targetEdgeId, () => edgeTooltipRef.value],
     () => {
       if (!edgeTooltipRef.value || edgeTooltipOpacity.value === 0 || !targetEdgeId.value) { return; }
@@ -364,7 +378,8 @@ watch( /* ... same as before ... */
       edgeTooltipPos.value = { left: left + "px", top: top + "px" };
     }, {flush: 'post'}
 );
-const graphEventHandlers = { /* ... same as before ... */
+
+const graphEventHandlers = {
   "edge:pointerover": (event) => {
     const domPointerEvent = event.event;
     if (domPointerEvent && typeof domPointerEvent.clientX === 'number' && typeof domPointerEvent.clientY === 'number') {
@@ -378,7 +393,8 @@ const graphEventHandlers = { /* ... same as before ... */
   },
   "edge:pointerout": () => { edgeTooltipOpacity.value = 0; },
 };
-async function fetchGraphData(mirnaNameToSearch, selectedToolsForGraph, mergeStrategyForGraph) { /* ... same as before ... */
+
+async function fetchGraphData(mirnaNameToSearch, selectedToolsForGraph, mergeStrategyForGraph) {
   if (!driver) { console.error('Neo4j driver not available.'); graphData.value = { nodes: [], relationships: [] }; return; }
   let session;
   try {
@@ -420,13 +436,11 @@ async function fetchGraphData(mirnaNameToSearch, selectedToolsForGraph, mergeStr
     graphData.value = { nodes: Array.from(tempNodes.values()), relationships: Array.from(tempRelationships.values()) };
   } catch (error) { console.error(`[DEBUG] fetchGraphData: Error for ${mirnaNameToSearch}:`, error); graphData.value = { nodes: [], relationships: [] }; } finally { if (session) await session.close(); }
 }
-onMounted(() => { /* ... same as before ... */
-  try { driver = neo4j.driver(NEO4J_URI, neo4j.auth.basic(NEO4J_USER, NEO4J_PASSWORD)); driver.verifyConnectivity().then(() => console.log('Neo4j driver connected.')).catch(err => console.error('Neo4j connect error:', err)); } catch (e) { console.error('Neo4j init error:', e); }
-});
-onUnmounted(async () => { /* ... same as before ... */
-  if (driver) await driver.close().then(()=> console.log('Neo4j driver closed.'));
-});
-async function fetchTableData(mirnaNameList) { /* ... same as before ... */
+
+onMounted(() => { try { driver = neo4j.driver(NEO4J_URI, neo4j.auth.basic(NEO4J_USER, NEO4J_PASSWORD)); driver.verifyConnectivity().then(() => console.log('Neo4j driver connected.')).catch(err => console.error('Neo4j connect error:', err)); } catch (e) { console.error('Neo4j init error:', e); } });
+onUnmounted(async () => { if (driver) await driver.close().then(()=> console.log('Neo4j driver closed.')); });
+
+async function fetchTableData(mirnaNameList) {
   console.log(`[Table Fetch] Requesting predictions for: ${mirnaNameList.join(', ')}`);
   let allIndividualPredictions = [];
   try {
@@ -456,7 +470,8 @@ async function fetchTableData(mirnaNameList) { /* ... same as before ... */
     console.log('[Table Fetch] rawPredictions.value (pre-multi-miRNA strategy):', JSON.parse(JSON.stringify(rawPredictions.value)));
   } catch (error) { console.error(`[Table Fetch] Error fetching table predictions for ${mirnaNameList.join(', ')}:`, error); rawPredictions.value = []; }
 }
-const filteredPredictions = computed(() => { /* ... same as before ... */
+
+const filteredPredictions = computed(() => {
   if (!rawPredictions.value || rawPredictions.value.length === 0) return [];
   let currentPredictions = JSON.parse(JSON.stringify(rawPredictions.value));
   const mirnaListForFiltering = inputtedMirna.value.split(/[\n,]+/).map(m => m.trim()).filter(Boolean);
@@ -491,7 +506,7 @@ function toggleTitleCollapse() { isTitleCollapsed.value = !isTitleCollapsed.valu
 
 async function submitSearchAndCollapseTitle() { collapseTitleIfNeeded(); hasTitleBeenCollapsedByAction.value = true; await submitSearch(); }
 
-async function submitSearch() { /* ... same as before ... */
+async function submitSearch() {
   isLoading.value = true; showOutput.value = false; graphDataKey.value++; rawPredictions.value = []; graphData.value = {nodes: [], relationships: []};
   const currentMirnasInput = mirnas.value;
   const mirnaList = currentMirnasInput.split(/[\n,]+/).map(m => m.trim()).filter(Boolean);
@@ -518,6 +533,7 @@ async function submitSearch() { /* ... same as before ... */
   else { viewMode.value = 'table'; }
   if (viewMode.value === 'graph' && graphViewDisabled.value) { viewMode.value = 'table'; }
 }
+
 function toggleSearchModeAndCollapseTitle() { if (!hasTitleBeenCollapsedByAction.value && !isTitleCollapsed.value) { isTitleCollapsed.value = true; hasTitleBeenCollapsedByAction.value = true; } toggleSearchMode(); }
 function toggleSearchMode() { searchMode.value = searchMode.value === 'single' ? 'multiple' : 'single'; }
 
@@ -526,54 +542,24 @@ function toggleViewMode() {
   viewMode.value = viewMode.value === 'graph' ? 'table' : 'graph';
 }
 
-// --- NEW Empty Functions for Buttons ---
 function exportTableData() {
   console.log("Export Table Data button clicked. Functionality to be implemented.");
-  // Placeholder: You would typically generate a CSV string from filteredPredictions.value
-  // and then trigger a download.
-  if (filteredPredictions.value.length === 0) {
-    alert("No table data to export.");
-    return;
-  }
+  if (filteredPredictions.value.length === 0) { alert("No table data to export."); return; }
   alert("Table export functionality is not yet implemented.");
 }
 
 function showPastSearches() {
   console.log("Show Past Searches button clicked. Functionality to be implemented.");
-  // Placeholder: You would typically fetch/display past search parameters or results
-  // from localStorage or a backend.
   alert("Show past searches functionality is not yet implemented.");
 }
-
 </script>
 
 <style scoped>
-.fill-height {
-  height: 100%;
-}
-.bio-bg {
-  background: linear-gradient(135deg, #e0f7fa, #f0faee);
-  position: relative;
-  overflow: hidden;
-}
-.dna-bg-overlay {
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  z-index: 0;
-  pointer-events: none;
-  background-repeat: repeat; background-position: 0 0;
-  background-size: 300px 800px; opacity: 0.07;
-  animation: scrollBackground 60s linear infinite;
-  background-image: url("data:image/svg+xml,%3Csvg width='300' height='800' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%2388c0d0' stroke-width='3'%3E%3Cpath d='M150 0 C280 50, 20 150, 150 200 C280 250, 20 350, 150 400 C280 450, 20 550, 150 600 C280 650, 20 750, 150 800'/%3E%3C/g%3E%3Cg fill='%23cba8ff'%3E%3Ccircle cx='150' cy='50' r='4'/%3E%3Ccircle cx='150' cy='150' r='4'/%3E%3Ccircle cx='150' cy='250' r='4'/%3E%Ccircle cx='150' cy='350' r='4'/%3E%3Ccircle cx='150' cy='450' r='4'/%3E%3Ccircle cx='150' cy='550' r='4'/%3E%3Ccircle cx='150' cy='650' r='4'/%3E%3Ccircle cx='150' cy='750' r='4'/%3E%3C/g%3E%3C/svg%3E");
-}
-@keyframes scrollBackground {
-  0% { background-position: 0 0; }
-  100% { background-position: 0 800px; }
-}
-.z-index-1 {
-  z-index: 1;
-  position: relative;
-}
+.fill-height { height: 100%; }
+.bio-bg { background: linear-gradient(135deg, #e0f7fa, #f0faee); position: relative; overflow: hidden; }
+.dna-bg-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 0; pointer-events: none; background-repeat: repeat; background-position: 0 0; background-size: 300px 800px; opacity: 0.07; animation: scrollBackground 60s linear infinite; background-image: url("data:image/svg+xml,%3Csvg width='300' height='800' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%2388c0d0' stroke-width='3'%3E%3Cpath d='M150 0 C280 50, 20 150, 150 200 C280 250, 20 350, 150 400 C280 450, 20 550, 150 600 C280 650, 20 750, 150 800'/%3E%3C/g%3E%3Cg fill='%23cba8ff'%3E%3Ccircle cx='150' cy='50' r='4'/%3E%3Ccircle cx='150' cy='150' r='4'/%3E%3Ccircle cx='150' cy='250' r='4'/%3E%Ccircle cx='150' cy='350' r='4'/%3E%3Ccircle cx='150' cy='450' r='4'/%3E%3Ccircle cx='150' cy='550' r='4'/%3E%3Ccircle cx='150' cy='650' r='4'/%3E%3Ccircle cx='150' cy='750' r='4'/%3E%3C/g%3E%3C/svg%3E"); }
+@keyframes scrollBackground { 0% { background-position: 0 0; } 100% { background-position: 0 800px; } }
+.z-index-1 { z-index: 1; position: relative; }
 .w-100 { width: 100%; }
 .edge-tooltip { top: 0; left: 0; opacity: 0; position: absolute; padding: 6px 10px; font-size: 12px; background-color: #fff0bd; border: 1px solid #ffb950; border-radius: 4px; box-shadow: 2px 2px 5px rgba(0,0,0,0.2); transition: opacity 0.2s ease-out; pointer-events: none; white-space: nowrap; z-index: 10; }
 .cursor-pointer { cursor: pointer; }
