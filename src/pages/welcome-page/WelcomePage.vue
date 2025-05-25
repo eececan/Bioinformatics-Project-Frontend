@@ -231,8 +231,11 @@ const filteredPredictions = computed(() => {
 const networkStatisticsText = computed(() => {
   if (!showOutput.value || isLoading.value) return "";
 
-  const { geneCount, pathwayCount, durationInSeconds, names } = rawPredictions.value;
-  const mirnaCount = names ? names.length : 0;
+  const { geneCount, pathwayCount, durationInSeconds } = rawPredictions.value;
+  const mirnaCount = inputtedMirnaForDisplay.value
+      ? inputtedMirnaForDisplay.value.split(",").map(m => m.trim()).filter(Boolean).length
+      : 0;
+
   let stats = `Found: ${geneCount || 0} genes, ${pathwayCount || 0} pathways for ${mirnaCount} miRNA(s). Analysis took ${Number(durationInSeconds || 0).toFixed(2)}s.`;
 
   if (viewMode.value === 'graph' && searchMode.value === 'single' && mirnaCount === 1) {
@@ -242,6 +245,7 @@ const networkStatisticsText = computed(() => {
   }
   return stats;
 });
+
 
 const toggleTitleCollapse = () => {
   isTitleCollapsed.value = !isTitleCollapsed.value;
