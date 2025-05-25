@@ -45,15 +45,16 @@ const edgeTooltipOpacity = ref(0);
 const edgeTooltipPos = ref({ left: "0px", top: "0px" });
 const mousePosition = ref({ x: 0, y: 0 });
 
+// --- Single/Multiple Search ---
+const searchErrorSnackbar = ref(false);
+const searchErrorMessage = ref('');
+
 // --- Past Searches State ---
 const showPastSearchesDialog = ref(false);
 const pastSearchesList = ref([]);
 const isLoadingPastSearches = ref(false);
 
-const graphViewDisabled = computed(() => {
-  const mirnaList = mirnas.value.split(/[\n,]+/).map(m => m.trim()).filter(Boolean);
-  return mirnaList.length > 1 && searchMode.value === 'multiple';
-});
+const graphViewDisabled = computed(() => false);
 
 const graphConfigs = defineConfigs({
   view: {
@@ -266,12 +267,21 @@ const toggleSearchModeAndCollapseTitle = () => {
 const submitSearchAndCollapseTitle = async () => {
   isLoading.value = true;
   showOutput.value = false;
-  rawPredictions.value = { names: [], predictions: [], geneCount: 0, pathwayCount: 0, durationInSeconds: 0 }; // Clear previous table data
-  graphData.value = { nodes: [], relationships: [] }; // Clear previous graph data
+  rawPredictions.value = { names: [], predictions: [], geneCount: 0, pathwayCount: 0, durationInSeconds: 0 };
+  graphData.value = { nodes: [], relationships: [] };
 
   const mirnaList = mirnas.value.split(/[\n,]+/).map(m => m.trim()).filter(Boolean);
-  if (mirnaList.length === 0) {
-    console.warn("No miRNA names entered.");
+
+  // Validation
+  if (searchMode.value === 'single' && mirnaList.length !== 1) {
+    searchErrorMessage.value = 'Please enter exactly one miRNA for Single Search.';
+    searchErrorSnackbar.value = true;
+    isLoading.value = false;
+    return;
+  }
+  if (searchMode.value === 'multiple' && mirnaList.length < 2) {
+    searchErrorMessage.value = 'Please enter at least two miRNAs for Multiple Search.';
+    searchErrorSnackbar.value = true;
     isLoading.value = false;
     return;
   }
@@ -284,18 +294,40 @@ const submitSearchAndCollapseTitle = async () => {
   }
 
   try {
+    // Fetch table results
     await fetchTableData(mirnaList);
-    if (searchMode.value === 'single' && mirnaList.length === 1) {
-      await fetchGraphData(mirnaList[0], selectedHeuristics.value, mergeStrategy.value);
-    } else {
-      graphData.value = { nodes: [], relationships: [] }; // Ensure graph is cleared for multi-miRNA or if no specific graph fetch
+
+    // Fetch and combine graph results
+    const combinedNodes = new Map();
+    const combinedRelationships = new Map();
+
+    for (const mirna of mirnaList) {
+      await fetchGraphData(mirna, selectedHeuristics.value, mergeStrategy.value);
+
+      for (const node of graphData.value.nodes) {
+        if (!combinedNodes.has(node.id)) {
+          combinedNodes.set(node.id, node);
+        }
+      }
+
+      for (const rel of graphData.value.relationships) {
+        if (!combinedRelationships.has(rel.id)) {
+          combinedRelationships.set(rel.id, rel);
+        }
+      }
     }
+
+    graphData.value = {
+      nodes: Array.from(combinedNodes.values()),
+      relationships: Array.from(combinedRelationships.values())
+    };
+
     showOutput.value = true;
   } catch (error) {
     console.error("Error during search submission:", error);
   } finally {
     isLoading.value = false;
-    graphDataKey.value++; // Force graph re-render if needed
+    graphDataKey.value++;
   }
 };
 
@@ -638,6 +670,21 @@ const exportTableData = () => {
         </v-card-actions>
       </v-card>
     </v-dialog>
+    <v-snackbar
+        v-model="searchErrorSnackbar"
+        color="red darken-1"
+        timeout="4000"
+        elevation="6"
+        location="top"
+    >
+      {{ searchErrorMessage }}
+      <template #actions>
+        <v-btn variant="text" @click="searchErrorSnackbar = false" color="white">
+          Close
+        </v-btn>
+      </template>
+    </v-snackbar>
+
   </v-container>
 </template>
 
