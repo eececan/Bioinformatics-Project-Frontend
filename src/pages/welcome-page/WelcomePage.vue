@@ -207,12 +207,34 @@ async function fetchTableData(mirnaNameList) {
     params.append('heuristic', heuristicStrategy.value);
 
     const response = await axios.get(`/api/predictions?${params.toString()}`);
-    rawPredictions.value = response.data; // Assuming backend returns { names, predictions, geneCount, pathwayCount, durationInSeconds }
+
+    // The backend now returns a 'Prediction' object, which Axios parses into a plain JavaScript object.
+    // We access its properties directly.
+    rawPredictions.value = {
+      // The 'mirna' array from the backend is directly accessible as response.data.mirna
+      names: response.data.mirna || [],
+      // The 'predictions' array from the backend is directly accessible as response.data.predictions
+      predictions: response.data.predictions || [],
+      // 'geneCount' is directly accessible as response.data.geneCount
+      geneCount: response.data.geneCount || 0,
+      // 'pathwayCount' is directly accessible as response.data.pathwayCount
+      pathwayCount: response.data.pathwayCount || 0,
+      // 'searchTime' is directly accessible as response.data.searchTime.
+      // It's a string, so we assign it directly to durationInSeconds.
+      durationInSeconds: response.data.searchTime || '0 ns'
+    };
     console.log('[Table Fetch] rawPredictions.value (from backend):', JSON.parse(JSON.stringify(rawPredictions.value)));
 
   } catch (error) {
     console.error(`[Table Fetch] Error fetching table predictions for ${mirnaNameList.join(', ')}:`, error);
-    rawPredictions.value = { names: [], predictions: [], geneCount: 0, pathwayCount: 0, durationInSeconds: 0 };
+    // In case of an error, ensure rawPredictions.value is reset to a consistent structure
+    rawPredictions.value = {
+      names: [],
+      predictions: [],
+      geneCount: 0,
+      pathwayCount: 0,
+      durationInSeconds: '0 ns' // Default value for durationInSeconds should also be a string
+    };
   }
 }
 
@@ -237,7 +259,8 @@ const networkStatisticsText = computed(() => {
       ? inputtedMirnaForDisplay.value.split(",").map(m => m.trim()).filter(Boolean).length
       : 0;
 
-  let stats = `Found: ${geneCount || 0} genes, ${pathwayCount || 0} pathways for ${mirnaCount} miRNA(s). Analysis took ${Number(durationInSeconds || 0).toFixed(2)}s.`;
+  let stats = `Found: ${geneCount || 0} genes, ${pathwayCount || 0} pathways for ${mirnaCount} miRNA(s). Database search took ${durationInSeconds }.`;
+
 
   if (viewMode.value === 'graph' && searchMode.value === 'single' && mirnaCount === 1) {
     const nodeCount = Object.keys(processedGraphNodes.value).length;
