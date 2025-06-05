@@ -24,7 +24,7 @@ const isTitleCollapsed = ref(false);
 const hasTitleBeenCollapsedByAction = ref(false);
 
 // --- Data ---
-const rawPredictions = ref({ names: [], predictions: [], geneCount: 0, pathwayCount: 0, durationInSeconds: 0 }); // Initialize with default structure
+const rawPredictions = ref({ names: [], predictions: [], geneCount: 0, pathwayCount: 0, durationInSeconds: 0 });
 const graphData = ref({ nodes: [], relationships: [] });
 
 // --- Constants ---
@@ -34,7 +34,7 @@ const strategies = ['UNION', 'INTERSECTION', 'AT_LEAST_TWO'];
 // --- Neo4j ---
 const NEO4J_URI = 'bolt://localhost:7687';
 const NEO4J_USER = 'neo4j';
-const NEO4J_PASSWORD = 'test1234'; // Replace with your actual password or env variable
+const NEO4J_PASSWORD = 'test1234';
 let driver;
 
 // --- Graph specific ---
@@ -153,47 +153,201 @@ const graphEventHandlers = {
   "edge:pointerout": () => { edgeTooltipOpacity.value = 0; },
 };
 
-async function fetchGraphData(mirnaNameToSearch, selectedToolsForGraph, mergeStrategyForGraph) {
+async function fetchGraphData(mirnaNamesToSearch, selectedToolsForGraph, mergeStrategyForGraph, heuristicStrategy) {
   if (!driver) { console.error('Neo4j driver not available.'); graphData.value = { nodes: [], relationships: [] }; return; }
   let session;
   try {
     session = driver.session({ database: 'neo4j' });
-    const params = { mirnaNameParam: mirnaNameToSearch, selectedToolsParam: selectedToolsForGraph };
+
+    if (!Array.isArray(mirnaNamesToSearch) || mirnaNamesToSearch.length === 0) {
+      console.error('mirnaNamesToSearch must be an array with at least one miRNA name.');
+      graphData.value = { nodes: [], relationships: [] };
+      return;
+    }
+
+    const params = {
+      mirnaNamesParam: mirnaNamesToSearch,
+      selectedToolsParam: selectedToolsForGraph
+    };
     let cypherQuery = '';
-    const baseMatch = `MATCH (mir:microRNA {name: $mirnaNameParam})`;
+
     const toolTypes = selectedToolsForGraph.length > 0 ? selectedToolsForGraph.join('|') : 'PicTar|RNA22|TargetScan|miRTarBase';
-    let targetFindingClause = '';
-    if (mergeStrategyForGraph === 'INTERSECTION' && selectedToolsForGraph.length > 0) {
-      if (selectedToolsForGraph.length < 1) {  console.error("Intersection strategy requires at least one tool."); graphData.value = {nodes:[], relationships:[]}; return; }
-      targetFindingClause = `OPTIONAL MATCH (mir)-[r_tool:${toolTypes}]->(target:Target) WITH mir, target, COLLECT(DISTINCT type(r_tool)) AS toolsOnEdge WHERE target IS NOT NULL AND size(toolsOnEdge) = size($selectedToolsParam) AND ALL(selTool IN $selectedToolsParam WHERE selTool IN toolsOnEdge) WITH mir, target, toolsOnEdge`;
-    } else if (mergeStrategyForGraph === 'AT_LEAST_TWO' && selectedToolsForGraph.length > 0) {
-      if (selectedToolsForGraph.length < 2) {  console.error("'At least two tools' strategy requires selecting at least two tools."); graphData.value = {nodes:[], relationships:[]}; return; }
-      targetFindingClause = `OPTIONAL MATCH (mir)-[r_tool:${toolTypes}]->(target:Target) WITH mir, target, COLLECT(DISTINCT type(r_tool)) AS toolsOnEdge WHERE target IS NOT NULL AND size(toolsOnEdge) >= 2 WITH mir, target, toolsOnEdge`;
-    } else { targetFindingClause = `OPTIONAL MATCH (mir)-[r_tool:${toolTypes}]->(target:Target) WITH mir, target, COLLECT(DISTINCT type(r_tool)) AS toolsOnEdge WHERE target IS NULL OR size(toolsOnEdge) > 0 WITH mir, target, toolsOnEdge`; }
+
+
+    // Helper function for tool-based merge strategy Cypher snippet
+    function getToolMergeCypherSnippet(strategy, selectedToolsCount) {
+      if (strategy === 'INTERSECTION') {
+        return `AND size(toolsOnEdge) = ${selectedToolsCount} AND ALL(selTool IN $selectedToolsParam WHERE selTool IN toolsOnEdge)`;
+      } else if (strategy === 'AT_LEAST_TWO') {
+        return `AND size(toolsOnEdge) >= 2`;
+      } else {
+        return `AND size(toolsOnEdge) > 0`; // Target must be predicted by at least one selected tool
+      }
+    }
+
+
+    // --- Cypher Query Construction ---
+
+    // Handle specific cases for tool strategy validation *before* building the main query part
+    if (mergeStrategyForGraph === 'INTERSECTION' && selectedToolsForGraph.length < 1) {
+      console.error("Intersection tool strategy requires at least one tool. No graph results will be found for this strategy.");
+      graphData.value = { nodes: [], relationships: [] }; return;
+    }
+    if (mergeStrategyForGraph === 'AT_LEAST_TWO' && selectedToolsForGraph.length < 2) {
+      console.error("'At least two tools' strategy requires selecting at least two tools. No graph results will be found for this strategy.");
+      graphData.value = { nodes: [], relationships: [] }; return;
+    }
+
+    // 1. Initial match for miRNAs and optional match to targets, collecting tools.
+    const baseMirnaTargetMatchAndCollect = `
+      MATCH (mir:microRNA) WHERE mir.name IN $mirnaNamesParam
+      OPTIONAL MATCH (mir)-[r_tool:${toolTypes}]->(target:Target)
+      WITH mir, target, COLLECT(DISTINCT type(r_tool)) AS toolsOnEdge
+    `;
+
+    let miRNAHeuristicFilteringAndAggregation = '';
+    const toolStrategyCondition = getToolMergeCypherSnippet(mergeStrategyForGraph, selectedToolsForGraph.length);
+
+
+    if (heuristicStrategy === 'UNION') {
+      miRNAHeuristicFilteringAndAggregation = `
+        WHERE target IS NOT NULL ${toolStrategyCondition}
+        WITH target, COLLECT(DISTINCT mir) AS predictingMiRNAs, COLLECT(DISTINCT {mir: mir, tools: toolsOnEdge}) AS mirToolDetails
+      `;
+    } else if (heuristicStrategy === 'INTERSECTION') {
+      miRNAHeuristicFilteringAndAggregation = `
+        WHERE target IS NOT NULL ${toolStrategyCondition}
+        WITH target, COLLECT(DISTINCT mir) AS predictingMiRNAs, COLLECT(DISTINCT {mir: mir, tools: toolsOnEdge}) AS mirToolDetails
+        WHERE size(predictingMiRNAs) = size($mirnaNamesParam)
+      `;
+    } else if (heuristicStrategy === 'MAJORITY') {
+      miRNAHeuristicFilteringAndAggregation = `
+        WHERE target IS NOT NULL ${toolStrategyCondition}
+        WITH target, COLLECT(DISTINCT mir) AS predictingMiRNAs, COLLECT(DISTINCT {mir: mir, tools: toolsOnEdge}) AS mirToolDetails
+        WHERE size(predictingMiRNAs) > (size($mirnaNamesParam) / 2.0)
+      `;
+    } else {
+      // Default case (e.g., if heuristicStrategy is undefined or a fallback)
+      miRNAHeuristicFilteringAndAggregation = `
+        WHERE target IS NOT NULL ${toolStrategyCondition}
+        WITH target, COLLECT(DISTINCT mir) AS predictingMiRNAs, COLLECT(DISTINCT {mir: mir, tools: toolsOnEdge}) AS mirToolDetails
+      `;
+    }
 
     cypherQuery = `
-      ${baseMatch}
-      ${targetFindingClause}
+      ${baseMirnaTargetMatchAndCollect}
+      ${miRNAHeuristicFilteringAndAggregation}
       OPTIONAL MATCH (target)-[r_path:PART_OF_PATHWAY]->(pathway:Pathway)
-      RETURN mir, target, toolsOnEdge, pathway, r_path
+      RETURN target, predictingMiRNAs, mirToolDetails, pathway, r_path
     `;
-    // console.log("--- GRAPH QUERY ---"); console.log("Strategy:", mergeStrategyForGraph, "Tools:", selectedToolsForGraph); console.log(cypherQuery); console.log("Params:", params); console.log("--------------------");
+
+    console.log("Executing Cypher Query:", cypherQuery);
+    console.log("With Params:", params);
+
     const result = await session.run(cypherQuery, params);
-    const tempNodes = new Map(); const tempRelationships = new Map();
-    result.records.forEach(record => {
-      const mir = record.get('mir'); const target = record.get('target'); const toolsOnEdge = record.get('toolsOnEdge'); const pathwayNode = record.get('pathway'); const pathwayRel = record.get('r_path');
-      if (mir && mir.elementId && !tempNodes.has(mir.elementId)) { tempNodes.set(mir.elementId, { id: mir.elementId, label: mir.properties.name || 'miRNA', type: 'microRNA', properties: mir.properties }); }
-      if (target && target.elementId && !tempNodes.has(target.elementId)) { tempNodes.set(target.elementId, { id: target.elementId, label: target.properties.name || 'Target', type: 'Target', properties: target.properties }); }
-      if (mir && target && toolsOnEdge && toolsOnEdge.length > 0) { const edgeId = `mirtarget-${mir.elementId}-${target.elementId}`; if (!tempRelationships.has(edgeId)) { tempRelationships.set(edgeId, { id: edgeId, source: mir.elementId, target: target.elementId, label: toolsOnEdge.join(', ') }); } }
-      if (target && pathwayNode && pathwayRel && pathwayNode.elementId && pathwayRel.elementId) {
-        if (!tempNodes.has(pathwayNode.elementId)) { tempNodes.set(pathwayNode.elementId, { id: pathwayNode.elementId, label: pathwayNode.properties.name || 'Pathway', type: 'Pathway', properties: pathwayNode.properties }); }
-        if (!tempRelationships.has(pathwayRel.elementId)) { if (tempNodes.has(target.elementId) && tempNodes.has(pathwayNode.elementId)) { tempRelationships.set(pathwayRel.elementId, { id: pathwayRel.elementId, source: target.elementId, target: pathwayNode.elementId, label: pathwayRel.type || "PART_OF_PATHWAY" }); } else { console.warn("Skipping pathway edge, source or target node not found in tempNodes map:", pathwayRel); } }
+    const tempNodes = new Map();
+    const tempRelationships = new Map();
+
+    // REMOVE THIS BLOCK:
+    // This part added miRNAs even if they had no connections.
+    /*
+    mirnaNamesToSearch.forEach(mirnaName => {
+      const mirnaPlaceholderId = `mirna-placeholder-${mirnaName}`;
+      if (!tempNodes.has(mirnaPlaceholderId)) {
+        tempNodes.set(mirnaPlaceholderId, {
+          id: mirnaPlaceholderId,
+          label: mirnaName,
+          type: 'microRNA',
+          properties: { name: mirnaName }
+        });
       }
     });
-    graphData.value = { nodes: Array.from(tempNodes.values()), relationships: Array.from(tempRelationships.values()) };
-  } catch (error) { console.error(`[DEBUG] fetchGraphData: Error for ${mirnaNameToSearch}:`, error); graphData.value = { nodes: [], relationships: [] }; } finally { if (session) await session.close(); }
-}
+    */
 
+    result.records.forEach(record => {
+      const target = record.get('target');
+      const predictingMiRNAs = record.get('predictingMiRNAs');
+      const mirToolDetails = record.get('mirToolDetails');
+      const pathwayNode = record.get('pathway');
+      const pathwayRel = record.get('r_path');
+
+      // Only add target node if it exists (which it should, due to WHERE target IS NOT NULL)
+      if (target && target.elementId) {
+        if (!tempNodes.has(target.elementId)) {
+          tempNodes.set(target.elementId, { id: target.elementId, label: target.properties.name || 'Target', type: 'Target', properties: target.properties });
+        }
+      }
+
+      // Add relationships from predicting miRNAs to the target
+      if (target && mirToolDetails) { // Target must exist to have miRNA relationships
+        mirToolDetails.forEach(detail => {
+          const mir = detail.mir; // This 'mir' is the actual Neo4j node
+          const toolsOnEdge = detail.tools; // This is 'toolsOnEdge' from the query result
+
+          if (mir && mir.elementId) {
+            // Only add miRNA node if it actually predicted a target
+            if (!tempNodes.has(mir.elementId)) {
+              tempNodes.set(mir.elementId, {
+                id: mir.elementId,
+                label: mir.properties.name || 'miRNA',
+                type: 'microRNA',
+                properties: mir.properties
+              });
+            }
+            const edgeId = `mirtarget-${mir.elementId}-${target.elementId}`;
+            // Only add relationship if it hasn't been added and has associated tools
+            if (!tempRelationships.has(edgeId) && toolsOnEdge && toolsOnEdge.length > 0) {
+              tempRelationships.set(edgeId, { id: edgeId, source: mir.elementId, target: target.elementId, label: toolsOnEdge.join(', ') });
+            }
+          }
+        });
+      }
+
+      // Add pathway node and relationship, only if a target exists and pathway data is present
+      if (target && pathwayNode && pathwayRel) {
+        if (!tempNodes.has(pathwayNode.elementId)) {
+          tempNodes.set(pathwayNode.elementId, { id: pathwayNode.elementId, label: pathwayNode.properties.name || 'Pathway', type: 'Pathway', properties: pathwayNode.properties });
+        }
+        const pathwayEdgeId = pathwayRel.elementId;
+        if (!tempRelationships.has(pathwayEdgeId)) {
+          // Ensure both target and pathway nodes are in tempNodes before adding the relationship
+          if (tempNodes.has(target.elementId) && tempNodes.has(pathwayNode.elementId)) {
+            tempRelationships.set(pathwayEdgeId, { id: pathwayEdgeId, source: target.elementId, target: pathwayNode.elementId, label: pathwayRel.type || "PART_OF_PATHWAY" });
+          } else {
+            console.warn("Skipping pathway edge, source or target node not found in tempNodes map:", pathwayRel);
+          }
+        }
+      }
+    });
+
+    graphData.value = { nodes: Array.from(tempNodes.values()), relationships: Array.from(tempRelationships.values()) };
+
+  } catch (error) {
+    console.error(`[DEBUG] fetchGraphData: Error for miRNAs ${mirnaNamesToSearch.join(', ')}:`, error);
+    graphData.value = { nodes: [], relationships: [] };
+  } finally {
+    if (session) await session.close();
+  }
+}
+function getToolMergeStrategyClause(strategy, selectedTools) {
+  const toolTypes = selectedTools.length > 0 ? selectedTools.join('|') : 'PicTar|RNA22|TargetScan|miRTarBase';
+  if (strategy === 'INTERSECTION' && selectedTools.length > 0) {
+    if (selectedTools.length < 1) {
+      console.error("Intersection strategy requires at least one tool.");
+      return `FALSE`; // This will prevent any matches if the condition is not met
+    }
+    return `AND size(toolsOnEdge) = size($selectedToolsParam) AND ALL(selTool IN $selectedToolsParam WHERE selTool IN toolsOnEdge)`;
+  } else if (strategy === 'AT_LEAST_TWO' && selectedTools.length > 0) {
+    if (selectedTools.length < 2) {
+      console.error("'At least two tools' strategy requires selecting at least two tools.");
+      return `FALSE`; // This will prevent any matches if the condition is not met
+    }
+    return `AND size(toolsOnEdge) >= 2`;
+  } else {
+    // Default (UNION for tools) or if no tools selected for specific strategies
+    return `AND size(toolsOnEdge) > 0`; // Only include targets predicted by at least one selected tool
+  }
+}
 onMounted(() => { try { driver = neo4j.driver(NEO4J_URI, neo4j.auth.basic(NEO4J_USER, NEO4J_PASSWORD)); driver.verifyConnectivity().then(() => console.log('Neo4j driver connected.')).catch(err => console.error('Neo4j connect error:', err)); } catch (e) { console.error('Neo4j init error:', e); } });
 onUnmounted(async () => { if (driver) await driver.close().then(()=> console.log('Neo4j driver closed.')); });
 
@@ -208,19 +362,11 @@ async function fetchTableData(mirnaNameList) {
 
     const response = await axios.get(`/api/predictions?${params.toString()}`);
 
-    // The backend now returns a 'Prediction' object, which Axios parses into a plain JavaScript object.
-    // We access its properties directly.
     rawPredictions.value = {
-      // The 'mirna' array from the backend is directly accessible as response.data.mirna
       names: response.data.mirna || [],
-      // The 'predictions' array from the backend is directly accessible as response.data.predictions
       predictions: response.data.predictions || [],
-      // 'geneCount' is directly accessible as response.data.geneCount
       geneCount: response.data.geneCount || 0,
-      // 'pathwayCount' is directly accessible as response.data.pathwayCount
       pathwayCount: response.data.pathwayCount || 0,
-      // 'searchTime' is directly accessible as response.data.searchTime.
-      // It's a string, so we assign it directly to durationInSeconds.
       durationInSeconds: response.data.searchTime || '0 ns'
     };
     console.log('[Table Fetch] rawPredictions.value (from backend):', JSON.parse(JSON.stringify(rawPredictions.value)));
@@ -233,7 +379,7 @@ async function fetchTableData(mirnaNameList) {
       predictions: [],
       geneCount: 0,
       pathwayCount: 0,
-      durationInSeconds: '0 ns' // Default value for durationInSeconds should also be a string
+      durationInSeconds: '0 ns'
     };
   }
 }
@@ -242,13 +388,14 @@ const filteredPredictions = computed(() => {
   if (!rawPredictions.value || !rawPredictions.value.predictions || rawPredictions.value.predictions.length === 0) {
     return [];
   }
-  const predictionsForTable = rawPredictions.value.predictions.map(pred => ({
+
+  return rawPredictions.value.predictions.map(pred => ({
     gene: pred.gene,
     tools: pred.tools,
     pathways: pred.pathways.length > 0 ? pred.pathways : ["N/A"],
-    mirnasInvolved: rawPredictions.value.names, // Use names from the top-level response
+    mirnasInvolved: rawPredictions.value.names,
+    connections: pred.connections || []
   }));
-  return predictionsForTable;
 });
 
 const networkStatisticsText = computed(() => {
@@ -320,40 +467,22 @@ const submitSearchAndCollapseTitle = async () => {
     // Fetch table results
     await fetchTableData(mirnaList);
 
-    // Fetch and combine graph results
-    const combinedNodes = new Map();
-    const combinedRelationships = new Map();
-
-    for (const mirna of mirnaList) {
-      await fetchGraphData(mirna, selectedHeuristics.value, mergeStrategy.value);
-
-      for (const node of graphData.value.nodes) {
-        if (!combinedNodes.has(node.id)) {
-          combinedNodes.set(node.id, node);
-        }
-      }
-
-      for (const rel of graphData.value.relationships) {
-        if (!combinedRelationships.has(rel.id)) {
-          combinedRelationships.set(rel.id, rel);
-        }
-      }
-    }
-
-    graphData.value = {
-      nodes: Array.from(combinedNodes.values()),
-      relationships: Array.from(combinedRelationships.values())
-    };
+    // Fetch graph results once, passing the entire list of miRNAs
+    // and the new heuristicStrategy
+    await fetchGraphData(mirnaList, selectedHeuristics.value, mergeStrategy.value, heuristicStrategy.value);
+    // Remove the loop that was here, as fetchGraphData now handles multiple miRNAs internally
 
     showOutput.value = true;
   } catch (error) {
     console.error("Error during search submission:", error);
+    // Optionally display an error to the user
+    searchErrorMessage.value = 'An error occurred during data analysis. Please try again.';
+    searchErrorSnackbar.value = true;
   } finally {
     isLoading.value = false;
-    graphDataKey.value++;
+    graphDataKey.value++; // Increment to force graph re-render if data changes
   }
 };
-
 const toggleViewMode = () => {
   viewMode.value = viewMode.value === 'graph' ? 'table' : 'graph';
 };
@@ -373,12 +502,11 @@ const openPastSearchesDialog = async () => {
 };
 
 const selectPastSearch = (searchItem) => {
-  mirnas.value = searchItem.mirnaNames.join(', '); // Or join with ', ' as per your input preference
+  mirnas.value = searchItem.mirnaNames.join(', ');
   selectedHeuristics.value = [...searchItem.tools];
   mergeStrategy.value = searchItem.toolSelection;
-  heuristicStrategy.value = searchItem.heuristic; // This is the multi-miRNA heuristic
+  heuristicStrategy.value = searchItem.heuristic;
 
-  // Determine search mode based on the number of miRNAs in the past search
   if (searchItem.mirnaNames.length > 1) {
     searchMode.value = 'multiple';
   } else {
@@ -389,21 +517,38 @@ const selectPastSearch = (searchItem) => {
   submitSearchAndCollapseTitle(); // Automatically submit the search
 };
 
-
 const exportTableData = () => {
   if (!filteredPredictions.value || filteredPredictions.value.length === 0) {
     console.warn("No data to export.");
     return;
   }
+
   let csvContent = "data:text/csv;charset=utf-8,";
-  csvContent += "miRNA(s),Tool(s),Gene,Pathway(s)\n";
+  csvContent += "miRNA(s),Tool(s),Tool-Score(s),Gene,Pathway(s)\n";
+
   filteredPredictions.value.forEach(row => {
-    const mirnasCsv = Array.isArray(row.mirnasInvolved) ? `"${row.mirnasInvolved.join(';')}"` : `"${inputtedMirnaForDisplay.value}"`;
-    const tools = Array.isArray(row.tools) ? `"${row.tools.join(';')}"` : "";
+    const mirnasCsv = Array.isArray(row.mirnasInvolved)
+        ? `"${row.mirnasInvolved.join(';')}"`
+        : `"${inputtedMirnaForDisplay.value}"`;
+
+    const tools = Array.isArray(row.tools)
+        ? `"${row.tools.join(';')}"`
+        : "";
+
     const gene = `"${row.gene}"`;
-    const pathways = Array.isArray(row.pathways) ? `"${row.pathways.join(';')}"` : "";
-    csvContent += `${mirnasCsv},${tools},${gene},${pathways}\n`;
+
+    const pathways = Array.isArray(row.pathways)
+        ? `"${row.pathways.join(';')}"`
+        : "";
+
+    const scoreDetails = (row.connections || [])
+        .map(conn => `${conn.tool} (${conn.mirna}): ${conn.quality ?? 'N/A'}`)
+        .join('; ');
+    const scores = `"${scoreDetails}"`;
+
+    csvContent += `${mirnasCsv},${tools},${scores},${gene},${pathways}\n`;
   });
+
   const encodedUri = encodeURI(csvContent);
   const link = document.createElement("a");
   link.setAttribute("href", encodedUri);
@@ -412,6 +557,7 @@ const exportTableData = () => {
   link.click();
   document.body.removeChild(link);
 };
+
 </script>
 
 <template>
@@ -476,7 +622,7 @@ const exportTableData = () => {
                 <template #append-inner>
                   <v-tooltip location="top">
                     <template #activator="{ props }"> <v-icon v-bind="props" small class="ml-1">mdi-information-outline</v-icon> </template>
-                    <span v-if="searchMode === 'single'">e.g., mmu-let-7a-5p</span> <span v-else>Separate with commas or newlines</span>
+                    <span v-if="searchMode === 'single'">e.g., mmu-let-7a-5p</span> <span v-else>Separate with commas or newlines (e.g., "mmu-let-7g, mmu-miR-328-3p")</span>
                   </v-tooltip>
                 </template>
               </v-textarea>
@@ -486,7 +632,7 @@ const exportTableData = () => {
                   multiple chips outlined class="mb-2 mt-4"
               >
                 <template #append>
-                  <v-tooltip text="Select prediction tools. Affects graph & table.">
+                  <v-tooltip text="Select at least two prediction tools for accurate search.">
                     <template #activator="{ props }"> <v-icon v-bind="props" small class="ml-2">mdi-information</v-icon> </template>
                   </v-tooltip>
                 </template>
@@ -497,7 +643,7 @@ const exportTableData = () => {
                   outlined chips class="mb-4 mt-4"
               >
                 <template #append>
-                  <v-tooltip text="'UNION' = targets from any selected tool, 'INTERSECTION' = targets common to ALL selected tools, 'AT_LEAST_TWO' = targets predicted by >= 2 selected tools. Affects graph & table.">
+                  <v-tooltip text="'UNION' = targets from any selected tool, 'INTERSECTION' = targets common to ALL selected tools, 'AT_LEAST_TWO' = targets predicted by >= 2 selected tools.">
                     <template #activator="{ props }"> <v-icon v-bind="props" small class="ml-2">mdi-help-circle</v-icon> </template>
                   </v-tooltip>
                 </template>
@@ -599,7 +745,7 @@ const exportTableData = () => {
               </div>
               <p v-else class="text-center text-grey-darken-2 mt-10 d-flex flex-column justify-center align-center fill-height">
                 <span>No graph data found for "{{ inputtedMirnaForDisplay }}" from Neo4j.</span>
-                <span class="text-caption mt-1">Try searching for a specific miRNA (e.g., "mmu-let-7a-5p"). Or check selected tools/strategy.</span>
+                <span class="text-caption mt-1">Try searching for a specific miRNA (e.g., "mmu-let-7g"). Or check selected tools/strategy.</span>
               </p>
             </div>
 
@@ -609,17 +755,43 @@ const exportTableData = () => {
                 style="width: 100%; height: 400px; background-color: #ffffff; border: 1px solid #ccc; overflow-y: auto;"
             >
               <div v-if="filteredPredictions.length" style="height: 100%; overflow-y: auto;"> <v-table dense>
-                <thead> <tr> <th>miRNA(s)</th> <th>Tool(s)</th> <th>Gene</th> <th>Pathway(s)</th> </tr> </thead>
+                <thead>
+                <tr>
+                  <th>miRNA(s)</th>
+                  <th>Tool(s)</th>
+                  <th>Score/Experiment(s)</th>
+                  <th>Gene</th>
+                  <th>Pathway(s)</th>
+                </tr>
+                </thead>
+
                 <tbody>
                 <tr v-for="(prediction, index) in filteredPredictions" :key="`${prediction.gene}-${index}`">
                   <td>
-                    <v-chip v-if="Array.isArray(prediction.mirnasInvolved)" v-for="mir in prediction.mirnasInvolved" :key="mir" small class="ma-1">{{ mir }}</v-chip>
-                    <span v-else>{{ prediction.mirna || inputtedMirnaForDisplay }}</span>
+                    <v-chip v-for="mir in prediction.mirnasInvolved" :key="mir" small class="ma-1">{{ mir }}</v-chip>
                   </td>
-                  <td> <v-chip v-for="(tool, i) in prediction.tools" :key="i" class="ma-1" small>{{ tool }}</v-chip> </td>
+                  <td>
+                    <v-chip v-for="(tool, i) in prediction.tools" :key="i" class="ma-1" small>{{ tool }}</v-chip>
+                  </td>
+                  <td>
+                    <div v-if="prediction.connections && prediction.connections.length > 0">
+                      <div
+                          v-for="(conn, i) in prediction.connections"
+                          :key="i"
+                          class="mb-1"
+                      >
+                        <strong>{{ conn.tool }}</strong> ({{ conn.mirna }}):
+                        <span>{{ conn.quality !== null && conn.quality !== undefined ? conn.quality : 'N/A' }}</span>
+                      </div>
+                    </div>
+                    <span v-else>N/A</span>
+                  </td>
                   <td>{{ prediction.gene }}</td>
-                  <td> <v-chip v-for="(path, j) in prediction.pathways" :key="j" class="ma-1" small>{{ path }}</v-chip> </td>
+                  <td>
+                    <v-chip v-for="(path, j) in prediction.pathways" :key="j" class="ma-1" small>{{ path }}</v-chip>
+                  </td>
                 </tr>
+
                 </tbody>
               </v-table>
               </div>
