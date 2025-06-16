@@ -43,6 +43,7 @@ const searchErrorSnackbar = ref(false);
 const searchErrorMessage = ref('');
 
 const showPastSearchesDialog = ref(false);
+const showHowToUseDialog = ref(false);
 const pastSearchesList = ref([]);
 const isLoadingPastSearches = ref(false);
 
@@ -280,8 +281,6 @@ async function fetchGraphData(mirnaNamesToSearch, selectedToolsForGraph, mergeSt
             label: toolLabels
           });
         }
-        // If it already exists, this indicates a logic error or redundant data.
-        // For robustness, you might want to log a warning or handle it.
       }
 
       // Add pathway nodes and edges
@@ -524,6 +523,13 @@ const exportTableData = () => {
                style="min-height: 100vh; position: relative;">
     <div class="dna-bg-overlay"></div>
 
+    <div style="position: absolute; top: 1.5rem; right: 1.5rem; z-index: 10;">
+      <v-btn variant="text" @click="showHowToUseDialog = true" class="text-grey-darken-1 text-capitalize">
+        How to use
+        <v-icon end>mdi-help-circle-outline</v-icon>
+      </v-btn>
+    </div>
+
     <div class="text-center position-relative z-index-1"
          :class="{ 'mb-8': !isTitleCollapsed, 'mb-4': isTitleCollapsed }" @click="toggleTitleCollapse"
          :style="isTitleCollapsed ? 'cursor: pointer;' : ''">
@@ -551,56 +557,24 @@ const exportTableData = () => {
                 <h3 class="text-h6 font-weight-medium text-grey-darken-2">
                   {{ searchMode === 'single' ? 'Single miRNA Search' : 'Multiple miRNAs Search' }}
                 </h3>
-                <v-tooltip location="bottom">
-                  <template #activator="{ props: tooltipProps }">
-                    <v-chip v-bind="tooltipProps" @click="toggleSearchModeAndCollapseTitle" color="green-darken-1"
-                            variant="outlined" label small class="cursor-pointer" style="user-select: none;"
-                            aria-label="Switch search mode">
-                      <v-icon left small class="mr-1">mdi-swap-horizontal-bold</v-icon> Switch
-                    </v-chip>
-                  </template>
-                  <span>Switch to {{ searchMode === 'single' ? 'Multiple miRNAs' : 'Single miRNA' }} Search Mode</span>
-                </v-tooltip>
+                <v-chip @click="toggleSearchModeAndCollapseTitle" color="green-darken-1" variant="outlined" label small
+                        class="cursor-pointer" style="user-select: none;">
+                  <v-icon left small class="mr-1">mdi-swap-horizontal-bold</v-icon> Switch to {{ searchMode === 'single'
+                    ? 'Multiple miRNAs' : 'Single miRNA' }} Mode
+                </v-chip>
               </div>
-              <v-textarea v-model="mirnas" :label="searchMode === 'single' ? 'Enter a single miRNA' : 'Enter miRNA(s)'"
-                          auto-grow rows="1" outlined class="mb-4" persistent-hint hint=" ">
-                <template #append-inner>
-                  <v-tooltip location="top">
-                    <template #activator="{ props }"> <v-icon v-bind="props" small
-                                                              class="ml-1">mdi-information-outline</v-icon> </template>
-                    <span v-if="searchMode === 'single'">e.g., mmu-let-7a-5p</span> <span v-else>Separate with commas or
-                      newlines (e.g., "mmu-let-7g, mmu-miR-328-3p")</span>
-                  </v-tooltip>
-                </template>
+              <v-textarea v-model="mirnas"
+                          :label="searchMode === 'single' ? 'Enter a single miRNA' : 'Enter miRNA(s) (comma or new line separated)'"
+                          auto-grow rows="1" outlined class="mb-4">
               </v-textarea>
               <v-select v-model="selectedHeuristics" :items="heuristics" label="Select Tools" multiple chips outlined
                         class="mb-2 mt-4">
-                <template #append>
-                  <v-tooltip text="Select at least two prediction tools for accurate search.">
-                    <template #activator="{ props }"> <v-icon v-bind="props" small class="ml-2">mdi-information</v-icon>
-                    </template>
-                  </v-tooltip>
-                </template>
               </v-select>
               <v-select v-model="mergeStrategy" :items="strategies" label="Select Tool Merge Strategy" outlined chips
                         class="mb-4 mt-4">
-                <template #append>
-                  <v-tooltip
-                      text="'UNION' = targets from any selected tool, 'INTERSECTION' = targets common to ALL selected tools, 'AT_LEAST_TWO' = targets predicted by >= 2 selected tools.">
-                    <template #activator="{ props }"> <v-icon v-bind="props" small class="ml-2">mdi-help-circle</v-icon>
-                    </template>
-                  </v-tooltip>
-                </template>
               </v-select>
               <v-select v-if="searchMode === 'multiple'" v-model="heuristicStrategy" :items="heuristicStrategies"
                         label="Select Multi-miRNA Heuristic Strategy" outlined chips class="mb-4 mt-4">
-                <template #append>
-                  <v-tooltip
-                      text="'UNION' = targets if any miRNA predicts them, 'INTERSECTION' = targets ONLY if ALL miRNAs predict them, 'MAJORITY' = targets if >50% of miRNAs predict them. (Affects Table View for multiple miRNAs)">
-                    <template #activator="{ props }"> <v-icon v-bind="props" small
-                                                              class="ml-2">mdi-account-group-outline</v-icon> </template>
-                  </v-tooltip>
-                </template>
               </v-select>
               <div class="text-center">
                 <v-btn type="submit" color="green darken-1" dark :loading="isLoading" class="mr-2">
@@ -738,6 +712,68 @@ const exportTableData = () => {
         </v-col>
       </v-row>
     </div>
+
+    <v-dialog v-model="showHowToUseDialog" max-width="700px">
+      <v-card class="rounded-lg">
+        <v-card-title class="d-flex justify-space-between align-center text-green-darken-2">
+          <span>How to use the Analyzer</span>
+          <v-btn icon variant="text" @click="showHowToUseDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        <v-divider></v-divider>
+        <v-card-text style="max-height: 60vh; overflow-y: auto;" class="py-4 px-6 text-grey-darken-3">
+          <h4 class="text-h6 mt-2 mb-2 font-weight-bold">1. Select Search Mode</h4>
+          <p class="body-1">You can switch between searching for a single miRNA or multiple miRNAs at once using the
+            "Switch Mode" button.</p>
+
+          <h4 class="text-h6 mt-4 mb-2 font-weight-bold">2. Enter miRNA(s)</h4>
+          <ul class="pl-5">
+            <li><strong>Single miRNA Search:</strong> Enter one full miRNA name (e.g., mmu-let-7a-5p).</li>
+            <li><strong>Multiple miRNAs Search:</strong> Enter multiple miRNA names, separated by commas or new lines.
+            </li>
+          </ul>
+
+          <h4 class="text-h6 mt-4 mb-2 font-weight-bold">3. Select Tools</h4>
+          <p class="body-1">Choose one or more prediction databases to query. It's recommended to select at least two
+            for more robust results.</p>
+
+          <h4 class="text-h6 mt-4 mb-2 font-weight-bold">4. Select Tool Merge Strategy</h4>
+          <ul class="pl-5">
+            <li><strong>UNION:</strong> Shows target genes predicted by <strong>any</strong> of your selected tools.
+            </li>
+            <li><strong>INTERSECTION:</strong> Shows target genes predicted by <strong>all</strong> of your selected
+              tools.</li>
+            <li><strong>AT_LEAST_TWO:</strong> Shows target genes predicted by <strong>at least two</strong> of your
+              selected tools.</li>
+          </ul>
+
+          <h4 class="text-h6 mt-4 mb-2 font-weight-bold">5. Select Multi-miRNA Heuristic Strategy (Multiple miRNAs Mode
+            only)</h4>
+          <p class="body-1">This determines how results are combined when you search for multiple miRNAs.</p>
+          <ul class="pl-5">
+            <li><strong>UNION:</strong> A gene is considered a target if <strong>any</strong> of the searched miRNAs
+              predict it.</li>
+            <li><strong>INTERSECTION:</strong> A gene is considered a target only if <strong>all</strong> of the
+              searched miRNAs predict it.</li>
+            <li><strong>MAJORITY:</strong> A gene is considered a target if more than half (>50%) of the searched miRNAs
+              predict it.</li>
+          </ul>
+
+          <h4 class="text-h6 mt-4 mb-2 font-weight-bold">6. Analyze & View Results</h4>
+          <p class="body-1">Click "Analyze" to see the results. You can toggle between a visual graph network and a data
+            table. The table data can be exported to a CSV file.</p>
+        </v-card-text>
+        <v-divider></v-divider>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn color="blue-grey-darken-1" variant="text" @click="showHowToUseDialog = false">
+            Close
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-dialog v-model="showPastSearchesDialog" max-width="700px" persistent>
       <v-card class="rounded-lg">
         <v-card-title class="d-flex justify-space-between align-center text-green-darken-2">
@@ -784,6 +820,7 @@ const exportTableData = () => {
         </v-card-actions>
       </v-card>
     </v-dialog>
+
     <v-snackbar v-model="searchErrorSnackbar" color="red darken-1" timeout="4000" elevation="6" location="top">
       {{ searchErrorMessage }}
       <template #actions>
