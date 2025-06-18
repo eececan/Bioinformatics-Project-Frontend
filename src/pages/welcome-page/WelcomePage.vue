@@ -1,7 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue';
 import axios from 'axios';
-import neo4j from 'neo4j-driver';
 import { VNetworkGraph, defineConfigs } from "v-network-graph";
 import { ForceLayout } from "v-network-graph/lib/force-layout";
 import "v-network-graph/lib/style.css";
@@ -25,12 +24,7 @@ const rawPredictions = ref({ names: [], predictions: [], geneCount: 0, pathwayCo
 const graphData = ref({ nodes: [], relationships: [] });
 
 const heuristics = ['RNA22', 'PicTar', 'miRTarBase', 'TargetScan'];
-const strategies = ['UNION', 'INTERSECTION', 'AT_LEAST_TWO'];
-
-const NEO4J_URI = 'bolt://localhost:7687';
-const NEO4J_USER = 'neo4j';
-const NEO4J_PASSWORD = 'test1234';
-let driver;
+const strategies = ['UNION', 'INTERSECTION', 'AT LEAST TWO'];;
 
 const graphInstance = ref();
 const edgeTooltipRef = ref();
@@ -147,186 +141,40 @@ const graphEventHandlers = {
 };
 
 async function fetchGraphData(mirnaNamesToSearch, selectedToolsForGraph, mergeStrategyForGraph, heuristicStrategy) {
-  if (!driver) {
-    console.error('Neo4j driver not available.');
-    graphData.value = { nodes: [], relationships: [] };
-    return;
-  }
-
   if (!Array.isArray(mirnaNamesToSearch) || mirnaNamesToSearch.length === 0) {
     console.error('miRNA input must be a non-empty array.');
     graphData.value = { nodes: [], relationships: [] };
     return;
   }
 
-  const session = driver.session({ database: 'neo4j' });
-
   try {
-    const toolTypes = selectedToolsForGraph.length > 0
-        ? selectedToolsForGraph.join('|')
-        : 'PicTar|RNA22|TargetScan|miRTarBase';
+    const params = new URLSearchParams();
+    mirnaNamesToSearch.forEach(name => params.append('miRNANames', name));
+    selectedToolsForGraph.forEach(tool => params.append('tools', tool));
+    params.append('toolSelection', mergeStrategyForGraph);
+    params.append('heuristic', heuristicStrategy);
 
-    const params = {
-      miRNANames: mirnaNamesToSearch,
-      tools: selectedToolsForGraph,
-      toolSelection: mergeStrategyForGraph,
-      heuristic: heuristicStrategy
-    };
+    console.log(`[Graph Fetch] Requesting graph from backend with params: ${params.toString()}`);
+    const response = await axios.get(`/api/graph?${params.toString()}`);
 
-    const cypherQuery = `
-      MATCH (m:microRNA)
-      WHERE m.name IN $miRNANames
-      MATCH (m)-[r:${toolTypes}]->(t:Target)
-      OPTIONAL MATCH (t)-[:PART_OF_PATHWAY]->(p:Pathway)
-
-      WITH
-        t,
-        COLLECT(DISTINCT type(r)) AS foundTools,
-        COLLECT(DISTINCT p) AS pathways,
-        COLLECT(DISTINCT {
-          tool: type(r),
-          quality: CASE
-            WHEN r.experiments IS NOT NULL THEN toString(r.experiments)
-            WHEN r.pct_score IS NOT NULL THEN toString(r.pct_score)
-            ELSE toString(r.score)
-          END,
-          mirna: m.name // Keep mirna name to link back to the specific miRNA node
-        }) AS connections,
-        COLLECT(DISTINCT m) AS predictingMiRNAs,
-        SIZE(COLLECT(DISTINCT m)) AS foundCount,
-        CASE
-          WHEN toUpper($heuristic) = 'INTERSECTION' THEN SIZE($miRNANames)
-          WHEN toUpper($heuristic) = 'MAJORITY' THEN FLOOR(SIZE($miRNANames)/2.0 + 1)
-          ELSE 1
-        END AS requiredCount
-
-      WHERE
-        (
-          toUpper($toolSelection) = 'UNION'
-          OR (toUpper($toolSelection) = 'INTERSECTION' AND SIZE(foundTools) = SIZE($tools))
-          OR (toUpper($toolSelection) = 'AT_LEAST_TWO' AND SIZE(foundTools) >= 2)
-        )
-        AND foundCount >= requiredCount
-
-      RETURN t, pathways, connections, predictingMiRNAs
-    `;
-
-    console.log("Cypher Query (Graph View):", cypherQuery);
-    console.log("Params:", params);
-
-    const result = await session.run(cypherQuery, params);
-
-    const tempNodes = new Map();
-    const tempRelationships = new Map();
-
-    for (const record of result.records) {
-      const target = record.get('t');
-      const miRNAs = record.get('predictingMiRNAs');
-      const pathways = record.get('pathways');
-      const connections = record.get('connections');
-
-      // Add target node
-      if (target && !tempNodes.has(target.elementId)) {
-        tempNodes.set(target.elementId, {
-          id: target.elementId,
-          label: target.properties.name,
-          type: 'Target',
-          properties: target.properties
-        });
-      }
-
-      // Group connections by miRNA for a given target
-      // Key: mirnaNode.elementId, Value: Array of {tool, quality}
-      const mirnaTargetConnections = new Map();
-
-      for (const conn of connections) {
-        const mirnaName = conn.mirna;
-        const tool = conn.tool;
-        const quality = conn.quality;
-
-        const mirnaNode = miRNAs.find(m => m.properties.name === mirnaName);
-        if (!mirnaNode) continue; // Ensure the miRNA node actually exists from the 'predictingMiRNAs' list
-
-        // Add miRNA node if not already present
-        if (!tempNodes.has(mirnaNode.elementId)) {
-          tempNodes.set(mirnaNode.elementId, {
-            id: mirnaNode.elementId,
-            label: mirnaName,
-            type: 'microRNA',
-            properties: mirnaNode.properties
-          });
-        }
-
-        if (!mirnaTargetConnections.has(mirnaNode.elementId)) {
-          mirnaTargetConnections.set(mirnaNode.elementId, []);
-        }
-        mirnaTargetConnections.get(mirnaNode.elementId).push({ tool, quality });
-      }
-
-      // Create a single edge for each miRNA-Target pair, combining tool information
-      for (const [mirnaElementId, conns] of mirnaTargetConnections.entries()) {
-        // Sort connections by tool name for consistent labeling
-        conns.sort((a, b) => a.tool.localeCompare(b.tool));
-        const toolLabels = conns.map(c => `${c.tool} (${c.quality})`).join(', ');
-
-        // Use a unique ID for the relationship between a specific miRNA and target
-        const edgeId = `mirtarget-${mirnaElementId}-${target.elementId}`;
-
-        // Ensure we only add one relationship per miRNA-Target pair
-        if (!tempRelationships.has(edgeId)) {
-          tempRelationships.set(edgeId, {
-            id: edgeId,
-            source: mirnaElementId,
-            target: target.elementId,
-            label: toolLabels
-          });
-        }
-      }
-
-      // Add pathway nodes and edges
-      for (const pathway of pathways) {
-        if (!pathway) continue;
-
-        if (!tempNodes.has(pathway.elementId)) {
-          tempNodes.set(pathway.elementId, {
-            id: pathway.elementId,
-            label: pathway.properties.name,
-            type: 'Pathway',
-            properties: pathway.properties
-          });
-        }
-
-        const edgeId = `targetpath-${target.elementId}-${pathway.elementId}`;
-        if (!tempRelationships.has(edgeId)) {
-          tempRelationships.set(edgeId, {
-            id: edgeId,
-            source: target.elementId,
-            target: pathway.elementId,
-            label: "KEGG API"
-          });
-        }
-      }
-    }
-
-    graphData.value = {
-      nodes: Array.from(tempNodes.values()),
-      relationships: Array.from(tempRelationships.values())
-    };
+    // The backend now provides the data in the exact format we need
+    graphData.value = response.data;
+    console.log('[Graph Fetch] Received graphData from backend:', JSON.parse(JSON.stringify(graphData.value)));
 
   } catch (err) {
-    console.error("fetchGraphData Error:", err);
+    console.error("Error fetching graph data from backend:", err);
+    searchErrorMessage.value = 'Failed to load graph data from the server.';
+    searchErrorSnackbar.value = true;
     graphData.value = { nodes: [], relationships: [] };
-  } finally {
-    await session.close();
   }
 }
+onMounted(() => {
+  console.log("Component mounted. Ready to fetch data from backend.");
+});
 
-onMounted(
-    () => {
-      try {
-        driver = neo4j.driver(NEO4J_URI, neo4j.auth.basic(NEO4J_USER, NEO4J_PASSWORD)); driver.verifyConnectivity().then(() => console.log('Neo4j driver connected.')).catch(err => console.error('Neo4j connect error:', err)); } catch (e) { console.error('Neo4j init error:', e); }
-    });
-onUnmounted(async () => { if (driver) await driver.close().then(() => console.log('Neo4j driver closed.')); });
+onUnmounted(() => {
+  console.log("Component unmounted.");
+});
 
 async function fetchTableData(mirnaNameList) {
   console.log(`[Table Fetch] Requesting predictions for: ${mirnaNameList.join(', ')}`);
@@ -744,7 +592,7 @@ const exportTableData = () => {
             </li>
             <li><strong>INTERSECTION:</strong> Shows target genes predicted by <strong>all</strong> of your selected
               tools.</li>
-            <li><strong>AT_LEAST_TWO:</strong> Shows target genes predicted by <strong>at least two</strong> of your
+            <li><strong>AT LEAST TWO:</strong> Shows target genes predicted by <strong>at least two</strong> of your
               selected tools.</li>
           </ul>
 
